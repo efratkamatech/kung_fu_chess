@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kfchess"
+version = "0.1.0"
+description = "Kung Fu Chess — real-time (no-turn) chess variant. Text/stdin-stdout core."
+requires-python = ">=3.10"
+# Pure standard library at runtime — no third-party runtime dependencies.
+dependencies = []
+
+[project.optional-dependencies]
+# Development / test tooling only. Installed with:  pip install -e ".[dev]"
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+# Lets you run the game as:  kfchess < fixture.in
+kfchess = "kfchess.main:main"
+
+# ---------------------------------------------------------------------------
+# Test + coverage configuration (your design: 100% unit coverage, HTML report)
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+branch = true
+source = ["kfchess"]
+
+[tool.coverage.report]
+show_missing = true
+# Fail the run if coverage drops below 100% for the files under test.
+fail_under = 100
+
+[tool.coverage.html]
+directory = "htmlcov"
