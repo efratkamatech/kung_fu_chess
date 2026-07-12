@@ -1,24 +1,25 @@
-"""RealTimeArbiter: moves take time.
+"""RealTimeArbiter: moves take time, and crossing pieces collide.
 
-Owns the in-flight motions. Starting a motion records where a piece is going and
-when it will arrive (``now + distance * ms_per_cell``); the piece stays on the
-board at its origin, marked ``MOVING``, until then. Advancing the clock and calling
-``resolve`` applies every motion whose arrival time has passed: the piece is moved
-to its destination (capturing whatever settled piece is there) and returns to
-``IDLE``.
+Owns the in-flight motions. Starting a motion records where a piece is going, when
+it started, and when it will arrive (``now + distance * ms_per_cell``); the piece
+stays on the board at its origin, marked ``MOVING``, until then.
 
-This is the component that mutates the board when a move completes. It knows the
-board, positions, and time, but not chess legality (the RuleEngine judged that
-before the motion started), pixels, or the text format.
+``resolve`` applies every motion that has arrived, in **start order** (earlier
+start time first; command order breaks ties). Applying a motion moves the piece to
+its destination and captures whatever piece is there. Because a moving piece stays
+at its origin until it arrives, two enemies crossing toward each other's squares
+are resolved by this rule automatically: the one that started first lands on the
+other (still sitting at its origin) and captures it — and the captured piece's own
+motion is cancelled so it cannot also complete.
 
-Distance is the Chebyshev distance (the larger of the row/column deltas) — the
-number of cells a sliding piece travels.
+The arbiter knows the board, positions, and time, but not chess legality (judged by
+the RuleEngine before a motion starts), pixels, or the text format.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Set
 
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
@@ -27,21 +28,24 @@ from kfchess.model.position import Position
 
 @dataclass(frozen=True)
 class Motion:
-    """A piece in flight from ``source`` to ``target``, arriving at ``arrival_ms``."""
+    """A piece in flight, with its timing and a sequence number for ordering."""
 
     piece: Piece
     source: Position
     target: Position
+    start_ms: int
     arrival_ms: int
+    sequence: int  # order the motion was started (tie-breaker for "started first")
 
 
 class RealTimeArbiter:
-    """Tracks active motions and applies them to the board as they arrive."""
+    """Tracks active motions and applies them — resolving collisions by start order."""
 
     def __init__(self, board: Board, ms_per_cell: int) -> None:
         self._board = board
         self._ms_per_cell = ms_per_cell
         self._motions: List[Motion] = []
+        self._next_sequence = 0
 
     def start_motion(
         self, piece: Piece, source: Position, target: Position, now_ms: int
@@ -54,17 +58,31 @@ class RealTimeArbiter:
             abs(target.row - source.row), abs(target.col - source.col)
         )
         arrival_ms = now_ms + distance * self._ms_per_cell
-        self._motions.append(Motion(piece, source, target, arrival_ms))
+        self._motions.append(
+            Motion(piece, source, target, now_ms, arrival_ms, self._next_sequence)
+        )
+        self._next_sequence += 1
         piece.state = PieceState.MOVING
 
     def resolve(self, now_ms: int) -> None:
-        """Apply every motion that has arrived by ``now_ms``; keep the rest in flight."""
-        still_in_flight: List[Motion] = []
-        for motion in self._motions:
-            if motion.arrival_ms <= now_ms:
-                self._board.remove(motion.source)
-                self._board.place(motion.target, motion.piece)
-                motion.piece.state = PieceState.IDLE
-            else:
-                still_in_flight.append(motion)
-        self._motions = still_in_flight
+        """Apply every motion that has arrived by ``now_ms``, in start order."""
+        arrived = [m for m in self._motions if m.arrival_ms <= now_ms]
+        arrived.sort(key=lambda m: (m.start_ms, m.sequence))
+
+        captured: Set[Piece] = set()
+        for motion in arrived:
+            if motion.piece in captured:
+                continue  # captured (and vacated) before its own motion resolved
+            self._board.remove(motion.source)
+            occupant = self._board.piece_at(motion.target)
+            if occupant is not None:
+                captured.add(occupant)  # this piece is taken; cancel its motion below
+            self._board.place(motion.target, motion.piece)
+            motion.piece.state = PieceState.IDLE
+
+        # Keep only motions still in flight whose piece was not captured.
+        self._motions = [
+            m
+            for m in self._motions
+            if m.arrival_ms > now_ms and m.piece not in captured
+        ]
