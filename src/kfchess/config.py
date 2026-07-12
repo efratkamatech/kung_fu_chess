@@ -35,3 +35,7 @@ BLACK_PREFIX = "b"
 ERR_MISSING_BOARD_SECTION = "MISSING_BOARD_SECTION"
 ERR_MISSING_COMMANDS_SECTION = "MISSING_COMMANDS_SECTION"
 ERR_UNKNOWN_COMMAND = "UNKNOWN_COMMAND"
+# PROVISIONAL: emitted for a malformed board cell token (bad color prefix or
+# unknown piece letter, e.g. "xK" / "wZ"). The exact token text is not yet
+# confirmed against VPL — verify with a test and change this one line if needed.
+ERR_INVALID_PIECE = "INVALID_PIECE"
