@@ -20,8 +20,8 @@ def test_duplicate_registration_rejected():
         rules.register("X", SlideMovement(((0, 1),)))
 
 
-def test_standard_set_has_the_five_pieces_but_not_pawn():
+def test_standard_set_has_all_six_pieces():
     rules = standard_movement_rules()
-    for letter in "KRBQN":
+    for letter in "KRBQNP":
         assert letter in rules
-    assert "P" not in rules
+    assert "Z" not in rules  # an unregistered letter

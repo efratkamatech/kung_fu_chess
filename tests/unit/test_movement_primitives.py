@@ -3,21 +3,29 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
-from kfchess.movement.primitives import OffsetMovement, SlideMovement
-from kfchess.movement.rules import ALL_DIRECTIONS, DIAGONAL, KNIGHT_OFFSETS, ORTHOGONAL
+from kfchess.movement.primitives import OffsetMovement, PawnMovement, SlideMovement
+from kfchess.movement.rules import (
+    ALL_DIRECTIONS,
+    DIAGONAL,
+    KNIGHT_OFFSETS,
+    ORTHOGONAL,
+    PAWN_FORWARD,
+)
 
-# For pure-shape tests an empty board suffices (nothing blocks the path).
+# Colour-independent primitives (slide/offset) ignore the mover; any piece works.
+MOVER = Piece(PieceType("R", "x"), Color.WHITE)
 BOARD = Board(8, 8)
 
 
 def reach(movement, src, dst):
-    return movement.can_reach(Position(*src), Position(*dst), BOARD)
+    return movement.can_reach(MOVER, Position(*src), Position(*dst), BOARD)
 
 
-def board_with_blocker(size, at):
-    board = Board(*size)
-    board.place(Position(*at), Piece(PieceType("P", "x"), Color.WHITE))
-    return board
+def put(board, at, color=Color.WHITE, letter="P"):
+    board.place(Position(*at), Piece(PieceType(letter, "x"), color))
+
+
+# --- SlideMovement / OffsetMovement shapes ---------------------------------
 
 
 def test_rook_slides_orthogonally_any_distance():
@@ -37,52 +45,109 @@ def test_bishop_slides_diagonally_only():
     bishop = SlideMovement(DIAGONAL)
     assert reach(bishop, (0, 0), (3, 3))
     assert reach(bishop, (3, 3), (0, 0))
-    assert reach(bishop, (0, 4), (2, 2))     # down-left
-    assert not reach(bishop, (0, 0), (0, 2))  # straight not allowed
+    assert reach(bishop, (0, 4), (2, 2))
+    assert not reach(bishop, (0, 0), (0, 2))
 
 
 def test_queen_rejects_non_colinear_delta():
     queen = SlideMovement(ALL_DIRECTIONS)
     assert reach(queen, (0, 0), (0, 3))
     assert reach(queen, (0, 0), (3, 3))
-    assert not reach(queen, (0, 0), (2, 1))  # crooked, not a straight line
+    assert not reach(queen, (0, 0), (2, 1))
 
 
 def test_king_moves_exactly_one_step():
     king = SlideMovement(ALL_DIRECTIONS, max_distance=1)
-    assert reach(king, (1, 1), (0, 0))       # one diagonal
-    assert reach(king, (1, 1), (1, 2))       # one orthogonal
-    assert not reach(king, (0, 0), (2, 2))   # two diagonal
-    assert not reach(king, (0, 0), (0, 2))   # two straight
+    assert reach(king, (1, 1), (0, 0))
+    assert reach(king, (1, 1), (1, 2))
+    assert not reach(king, (0, 0), (2, 2))
+    assert not reach(king, (0, 0), (0, 2))
 
 
 def test_knight_jumps_to_l_offsets_only():
     knight = OffsetMovement(KNIGHT_OFFSETS)
-    assert reach(knight, (2, 2), (0, 1))     # offset (-2, -1)
-    assert reach(knight, (2, 2), (4, 3))     # offset (2, 1)
-    assert not reach(knight, (2, 2), (2, 3))  # adjacent, not an L
-    assert not reach(knight, (2, 2), (4, 4))  # diagonal, not an L
+    assert reach(knight, (2, 2), (0, 1))
+    assert reach(knight, (2, 2), (4, 3))
+    assert not reach(knight, (2, 2), (2, 3))
+    assert not reach(knight, (2, 2), (4, 4))
+
+
+# --- blockers --------------------------------------------------------------
 
 
 def test_slide_is_blocked_by_a_piece_in_the_path():
-    board = board_with_blocker((1, 4), at=(0, 1))  # blocker between source and target
-    rook = SlideMovement(ORTHOGONAL)
-    assert not rook.can_reach(Position(0, 0), Position(0, 3), board)
+    board = Board(1, 4)
+    put(board, (0, 1))
+    assert not SlideMovement(ORTHOGONAL).can_reach(
+        MOVER, Position(0, 0), Position(0, 3), board
+    )
 
 
 def test_slide_reaches_when_path_is_clear():
-    rook = SlideMovement(ORTHOGONAL)
-    assert rook.can_reach(Position(0, 0), Position(0, 3), Board(1, 4))
+    assert SlideMovement(ORTHOGONAL).can_reach(
+        MOVER, Position(0, 0), Position(0, 3), Board(1, 4)
+    )
 
 
 def test_slide_ignores_a_piece_on_the_destination_itself():
-    # The destination occupant is the RuleEngine's concern, not the path check.
-    board = board_with_blocker((1, 4), at=(0, 3))
-    rook = SlideMovement(ORTHOGONAL)
-    assert rook.can_reach(Position(0, 0), Position(0, 3), board)
+    board = Board(1, 4)
+    put(board, (0, 3))
+    assert SlideMovement(ORTHOGONAL).can_reach(
+        MOVER, Position(0, 0), Position(0, 3), board
+    )
 
 
 def test_knight_ignores_blockers():
-    board = board_with_blocker((3, 3), at=(1, 1))
-    knight = OffsetMovement(KNIGHT_OFFSETS)
-    assert knight.can_reach(Position(0, 0), Position(2, 1), board)  # jumps over
+    board = Board(3, 3)
+    put(board, (1, 1))
+    assert OffsetMovement(KNIGHT_OFFSETS).can_reach(
+        MOVER, Position(0, 0), Position(2, 1), board
+    )
+
+
+# --- PawnMovement ----------------------------------------------------------
+
+WHITE_PAWN = Piece(PieceType("P", "x"), Color.WHITE)
+BLACK_PAWN = Piece(PieceType("P", "x"), Color.BLACK)
+
+
+def pawn():
+    return PawnMovement(PAWN_FORWARD)
+
+
+def test_white_pawn_moves_one_step_up_into_empty():
+    assert pawn().can_reach(WHITE_PAWN, Position(1, 1), Position(0, 1), Board(3, 3))
+
+
+def test_pawn_cannot_advance_onto_an_occupied_cell():
+    board = Board(3, 3)
+    put(board, (0, 1), color=Color.BLACK)  # enemy directly ahead
+    assert not pawn().can_reach(WHITE_PAWN, Position(1, 1), Position(0, 1), board)
+
+
+def test_pawn_captures_an_enemy_diagonally_forward():
+    board = Board(3, 3)
+    put(board, (0, 0), color=Color.BLACK)
+    assert pawn().can_reach(WHITE_PAWN, Position(1, 1), Position(0, 0), board)
+
+
+def test_pawn_cannot_move_diagonally_into_empty():
+    assert not pawn().can_reach(WHITE_PAWN, Position(1, 1), Position(0, 0), Board(3, 3))
+
+
+def test_pawn_cannot_capture_its_own_color_diagonally():
+    board = Board(3, 3)
+    put(board, (0, 0), color=Color.WHITE)  # friendly diagonal
+    assert not pawn().can_reach(WHITE_PAWN, Position(1, 1), Position(0, 0), board)
+
+
+def test_pawn_cannot_move_sideways_or_backward():
+    board = Board(3, 3)
+    assert not pawn().can_reach(WHITE_PAWN, Position(1, 1), Position(1, 2), board)  # side
+    assert not pawn().can_reach(WHITE_PAWN, Position(1, 1), Position(2, 1), board)  # back
+
+
+def test_black_pawn_advances_downward():
+    board = Board(3, 3)
+    assert pawn().can_reach(BLACK_PAWN, Position(0, 1), Position(1, 1), board)
+    assert not pawn().can_reach(BLACK_PAWN, Position(1, 1), Position(0, 1), board)

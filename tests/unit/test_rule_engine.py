@@ -33,7 +33,7 @@ def test_empty_source_is_illegal():
 
 
 def test_piece_without_a_rule_cannot_move():
-    board = board_with("P", at=(1, 1))  # pawn has no movement rule yet (Iteration 5)
+    board = board_with("Z", at=(1, 1))  # no movement rule registered for "Z"
     assert not rule_engine().is_legal_move(board, Position(1, 1), Position(0, 1))
 
 
@@ -60,3 +60,14 @@ def test_blocked_path_is_illegal():
     place(board, "R", Color.WHITE, (0, 0))
     place(board, "P", Color.WHITE, (0, 1))  # blocker in the path
     assert not rule_engine().is_legal_move(board, Position(0, 0), Position(0, 2))
+
+
+def test_white_pawn_forward_to_empty_is_legal():
+    board = board_with("P", color=Color.WHITE, at=(1, 1))
+    assert rule_engine().is_legal_move(board, Position(1, 1), Position(0, 1))
+
+
+def test_white_pawn_forward_onto_enemy_is_illegal():
+    board = board_with("P", color=Color.WHITE, at=(1, 1))
+    place(board, "R", Color.BLACK, (0, 1))  # enemy directly ahead
+    assert not rule_engine().is_legal_move(board, Position(1, 1), Position(0, 1))
