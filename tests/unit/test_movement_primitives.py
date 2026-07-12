@@ -1,14 +1,23 @@
 from kfchess.model.board import Board
+from kfchess.model.color import Color
+from kfchess.model.piece import Piece
+from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
 from kfchess.movement.primitives import OffsetMovement, SlideMovement
 from kfchess.movement.rules import ALL_DIRECTIONS, DIAGONAL, KNIGHT_OFFSETS, ORTHOGONAL
 
-# The board is ignored by can_reach in Iteration 3 (no blockers yet).
+# For pure-shape tests an empty board suffices (nothing blocks the path).
 BOARD = Board(8, 8)
 
 
 def reach(movement, src, dst):
     return movement.can_reach(Position(*src), Position(*dst), BOARD)
+
+
+def board_with_blocker(size, at):
+    board = Board(*size)
+    board.place(Position(*at), Piece(PieceType("P", "x"), Color.WHITE))
+    return board
 
 
 def test_rook_slides_orthogonally_any_distance():
@@ -53,3 +62,27 @@ def test_knight_jumps_to_l_offsets_only():
     assert reach(knight, (2, 2), (4, 3))     # offset (2, 1)
     assert not reach(knight, (2, 2), (2, 3))  # adjacent, not an L
     assert not reach(knight, (2, 2), (4, 4))  # diagonal, not an L
+
+
+def test_slide_is_blocked_by_a_piece_in_the_path():
+    board = board_with_blocker((1, 4), at=(0, 1))  # blocker between source and target
+    rook = SlideMovement(ORTHOGONAL)
+    assert not rook.can_reach(Position(0, 0), Position(0, 3), board)
+
+
+def test_slide_reaches_when_path_is_clear():
+    rook = SlideMovement(ORTHOGONAL)
+    assert rook.can_reach(Position(0, 0), Position(0, 3), Board(1, 4))
+
+
+def test_slide_ignores_a_piece_on_the_destination_itself():
+    # The destination occupant is the RuleEngine's concern, not the path check.
+    board = board_with_blocker((1, 4), at=(0, 3))
+    rook = SlideMovement(ORTHOGONAL)
+    assert rook.can_reach(Position(0, 0), Position(0, 3), board)
+
+
+def test_knight_ignores_blockers():
+    board = board_with_blocker((3, 3), at=(1, 1))
+    knight = OffsetMovement(KNIGHT_OFFSETS)
+    assert knight.can_reach(Position(0, 0), Position(2, 1), board)  # jumps over
