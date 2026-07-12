@@ -27,6 +27,10 @@ COMMANDS_SECTION_HEADER = "Commands:"
 EMPTY_CELL = "."
 CELL_SEPARATOR = " "  # single space between cells within a row
 
+# --- Command names -----------------------------------------------------------
+# Iteration 1 supports only `print board`; `click` and `wait` join in Iteration 2.
+CMD_PRINT_BOARD = "print board"
+
 # Color is encoded as a one-letter prefix on each piece token, e.g. "wK", "bR".
 WHITE_PREFIX = "w"
 BLACK_PREFIX = "b"
