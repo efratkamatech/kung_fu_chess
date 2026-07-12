@@ -6,9 +6,10 @@ built by combining a primitive with *data* (which directions, which offsets) —
 by writing new branching logic. That is the design's "pieces are registered, not
 coded" rule.
 
-Iteration 3 checks shape only; the ``board`` argument is accepted but not yet
-consulted (there are no blockers). Iteration 4 will teach ``SlideMovement`` to stop
-at the first occupied cell along the path.
+``SlideMovement`` also checks that the path *between* source and target is clear
+(it cannot slide through a piece); the destination cell itself is left to the
+RuleEngine, which knows whether landing there is a capture or blocked by a friend.
+``OffsetMovement`` (the knight) ignores the path entirely — it jumps over blockers.
 """
 
 from __future__ import annotations
@@ -67,6 +68,14 @@ class SlideMovement:
 
         if self._max_distance is not None and distance > self._max_distance:
             return False
+
+        # The path must be clear: every cell strictly between source and target
+        # (i.e. steps 1 .. distance-1) must be empty. The destination itself is not
+        # checked here — landing there may be a capture, which the RuleEngine judges.
+        for i in range(1, distance):
+            between = source.translated(step[0] * i, step[1] * i)
+            if board.piece_at(between) is not None:
+                return False
         return True
 
 
