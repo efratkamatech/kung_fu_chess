@@ -46,6 +46,12 @@ class RealTimeArbiter:
         self._ms_per_cell = ms_per_cell
         self._motions: List[Motion] = []
         self._next_sequence = 0
+        self._game_over = False
+
+    @property
+    def is_game_over(self) -> bool:
+        """True once a king has been captured (the game has ended)."""
+        return self._game_over
 
     def start_motion(
         self, piece: Piece, source: Position, target: Position, now_ms: int
@@ -77,6 +83,8 @@ class RealTimeArbiter:
             occupant = self._board.piece_at(motion.target)
             if occupant is not None:
                 captured.add(occupant)  # this piece is taken; cancel its motion below
+                if occupant.piece_type.is_king:
+                    self._game_over = True  # capturing a king ends the game
             self._board.place(motion.target, motion.piece)
             motion.piece.state = PieceState.IDLE
 
