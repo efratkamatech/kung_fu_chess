@@ -4,10 +4,11 @@ Given the board and a move (source -> target), decide whether it is legal. It is
 strictly read-only: it never mutates the board (that is the GameEngine's job). The
 movement rules are injected, so the set of pieces/geometry is configurable.
 
-Iteration 3 checks *shape* legality only — does the piece's movement geometry
-reach the target. Deliberately not here yet (added at this same method in later
-iterations):
-- blockers along the path and can't-capture-own-color (Iteration 4);
+It checks shape legality (the piece's geometry reaches the target, with the path
+clear — the path check lives in SlideMovement) and the capture rule (you cannot
+land on your own color; an enemy at the destination is a legal capture).
+
+Deliberately not here yet (added at this same method later):
 - pawn rules (Iteration 5);
 - "can't redirect a piece already moving" (Iteration 7).
 """
@@ -36,4 +37,12 @@ class RuleEngine:
         if letter not in self._movement_rules:
             return False  # a piece with no movement rule can't move (e.g. pawn pre-iter5)
 
-        return self._movement_rules.get(letter).can_reach(source, target, board)
+        if not self._movement_rules.get(letter).can_reach(source, target, board):
+            return False
+
+        # Capture rule: an empty destination is a plain move, an enemy there is a
+        # legal capture, but you cannot land on a piece of your own color.
+        occupant = board.piece_at(target)
+        if occupant is not None and occupant.color == piece.color:
+            return False
+        return True
