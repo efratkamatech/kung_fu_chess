@@ -4,13 +4,23 @@ from kfchess.config import (
     ERR_UNKNOWN_COMMAND,
     error_message,
 )
+from kfchess.control.controller import Controller
+from kfchess.engine.clock import Clock
+from kfchess.engine.game_engine import GameEngine
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.text_io.board_parser import BoardParser
 from kfchess.text_io.board_printer import BoardPrinter
 
 
+def _build_game(board):
+    engine = GameEngine(board, Clock())
+    return engine, Controller(engine)
+
+
 def make_loop():
-    return CommandLoop(BoardParser(standard_piece_types()), BoardPrinter())
+    return CommandLoop(
+        BoardParser(standard_piece_types()), BoardPrinter(), _build_game
+    )
 
 
 def test_print_board_renders_grid():
@@ -30,3 +40,16 @@ def test_malformed_fixture_returns_error_line():
 def test_multiple_commands_joined_by_newline():
     out = make_loop().run("Board:\nwK bK\nCommands:\nprint board\nfoo\n")
     assert out == "wK bK\n" + error_message(ERR_UNKNOWN_COMMAND)
+
+
+def test_click_move_wait_then_print():
+    text = (
+        "Board:\nwK . .\n. . .\n. . .\n"
+        "Commands:\nclick 50 50\nclick 150 150\nwait 1000\nprint board\n"
+    )
+    assert make_loop().run(text) == ". . .\n. wK .\n. . ."
+
+
+def test_click_and_wait_alone_produce_no_output():
+    out = make_loop().run("Board:\nwK .\n. .\nCommands:\nclick 50 50\nwait 500\n")
+    assert out == ""

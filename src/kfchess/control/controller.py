@@ -45,11 +45,11 @@ class Controller:
                 self._selected = position
             return
 
-        # A piece is already selected.
+        # A piece is already selected. While a selection is held the board cannot
+        # change under it, so the selected cell always still holds its piece.
         selected_piece = board.piece_at(self._selected)
         clicked_friendly = (
             target_piece is not None
-            and selected_piece is not None
             and target_piece.color == selected_piece.color
         )
         if clicked_friendly:

@@ -64,3 +64,20 @@ def test_from_grid_rejects_empty():
 def test_from_grid_rejects_ragged():
     with pytest.raises(ValueError):
         Board.from_grid([[None, None], [None]])
+
+
+def test_remove_returns_piece_and_clears_cell():
+    board = Board(2, 2)
+    piece = make_piece()
+    board.place(Position(0, 0), piece)
+    assert board.remove(Position(0, 0)) is piece
+    assert board.is_empty(Position(0, 0))
+
+
+def test_remove_empty_cell_returns_none():
+    assert Board(2, 2).remove(Position(0, 0)) is None
+
+
+def test_remove_off_board_raises():
+    with pytest.raises(ValueError):
+        Board(2, 2).remove(Position(5, 5))
