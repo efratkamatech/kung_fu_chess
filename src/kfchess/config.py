@@ -32,6 +32,11 @@ CELL_SEPARATOR = " "  # single space between cells within a row
 # cell (row = y // CELL_PX, col = x // CELL_PX).
 CELL_PX = 100
 
+# --- Timing ------------------------------------------------------------------
+# A move takes this long per cell of travel: a move of `distance` cells arrives
+# `distance * MS_PER_CELL` ms after it starts (so a 2-cell move takes 2000 ms).
+MS_PER_CELL = 1000
+
 # --- Command names -----------------------------------------------------------
 CMD_PRINT_BOARD = "print board"
 CMD_CLICK = "click"  # usage: "click <x> <y>"
