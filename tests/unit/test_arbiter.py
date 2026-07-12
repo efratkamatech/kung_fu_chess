@@ -19,10 +19,12 @@ def board_with_rook():
 
 
 def test_motion_records_its_fields():
-    motion = Motion(rook(), Position(0, 0), Position(0, 2), 2000)
+    motion = Motion(rook(), Position(0, 0), Position(0, 2), 0, 2000, 0)
     assert motion.source == Position(0, 0)
     assert motion.target == Position(0, 2)
+    assert motion.start_ms == 0
     assert motion.arrival_ms == 2000
+    assert motion.sequence == 0
 
 
 def test_start_motion_keeps_piece_at_origin_and_marks_it_moving():
@@ -66,3 +68,35 @@ def test_arriving_piece_captures_a_settled_piece_at_the_destination():
     arbiter.start_motion(mover, Position(0, 0), Position(0, 2), now_ms=0)
     arbiter.resolve(2000)
     assert board.piece_at(Position(0, 2)) is mover  # captured
+
+
+def test_two_enemies_crossing_the_one_that_started_first_wins():
+    board = Board(1, 4)
+    white = rook(Color.WHITE)
+    black = rook(Color.BLACK)
+    board.place(Position(0, 0), white)
+    board.place(Position(0, 3), black)
+    arbiter = RealTimeArbiter(board, MS_PER_CELL)
+    arbiter.start_motion(white, Position(0, 0), Position(0, 3), now_ms=0)  # started first
+    arbiter.start_motion(black, Position(0, 3), Position(0, 0), now_ms=0)  # started second
+    arbiter.resolve(3000)  # both arrive together; white (first) captures black
+    assert board.piece_at(Position(0, 3)) is white
+    assert board.is_empty(Position(0, 0))
+    assert board.is_empty(Position(0, 1))
+    assert board.is_empty(Position(0, 2))
+
+
+def test_capturing_a_moving_piece_cancels_its_in_flight_motion():
+    board = Board(1, 4)
+    white = rook(Color.WHITE)
+    black = rook(Color.BLACK)
+    board.place(Position(0, 2), white)
+    board.place(Position(0, 3), black)
+    arbiter = RealTimeArbiter(board, MS_PER_CELL)
+    arbiter.start_motion(black, Position(0, 3), Position(0, 0), now_ms=0)  # arrives 3000
+    arbiter.start_motion(white, Position(0, 2), Position(0, 3), now_ms=0)  # arrives 1000
+    arbiter.resolve(1000)  # white reaches black's cell first and captures it
+    assert board.piece_at(Position(0, 3)) is white
+    arbiter.resolve(3000)  # black's motion was cancelled, so nothing reappears
+    assert board.piece_at(Position(0, 3)) is white
+    assert board.is_empty(Position(0, 0))
