@@ -66,6 +66,11 @@ class Board:
         self._require_in_bounds(position)
         self._pieces[position] = piece
 
+    def remove(self, position: Position) -> Optional[Piece]:
+        """Clear the cell at ``position``, returning the piece that was there (or None)."""
+        self._require_in_bounds(position)
+        return self._pieces.pop(position, None)
+
     # --- construction --------------------------------------------------------
     @classmethod
     def from_grid(cls, grid: Sequence[Sequence[Optional[Piece]]]) -> "Board":
