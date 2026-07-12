@@ -5,16 +5,21 @@ built from primitives. Adding a piece means registering its geometry here; no
 engine code changes. The direction/offset tuples live here because they *are* the
 registry's data.
 
-Pawn (``P``) is deliberately not registered yet; its (direction-dependent) rules
-arrive in Iteration 5. Until then a pawn has no legal move, which is correct for
-Iterations 3-4 where pawns only appear as blockers.
+The pawn (``P``) is colour-dependent (white advances up, black down), so its
+forward directions live here as data and are handed to ``PawnMovement``.
 """
 
 from __future__ import annotations
 
 from typing import Dict
 
-from kfchess.movement.primitives import Movement, OffsetMovement, SlideMovement
+from kfchess.model.color import Color
+from kfchess.movement.primitives import (
+    Movement,
+    OffsetMovement,
+    PawnMovement,
+    SlideMovement,
+)
 
 # Direction data (registry values, not business-logic constants).
 ORTHOGONAL: tuple = ((-1, 0), (1, 0), (0, -1), (0, 1))
@@ -24,6 +29,9 @@ KNIGHT_OFFSETS: tuple = (
     (-2, -1), (-2, 1), (-1, -2), (-1, 2),
     (1, -2), (1, 2), (2, -1), (2, 1),
 )
+# Row step a pawn advances by: white moves "up" the board (toward row 0), black
+# moves "down". ("Forward" is a movement concept, so it lives here, not on Color.)
+PAWN_FORWARD = {Color.WHITE: -1, Color.BLACK: 1}
 
 
 class MovementRuleSet:
@@ -52,4 +60,5 @@ def standard_movement_rules() -> MovementRuleSet:
     rules.register("B", SlideMovement(DIAGONAL))
     rules.register("Q", SlideMovement(ALL_DIRECTIONS))
     rules.register("N", OffsetMovement(KNIGHT_OFFSETS))
+    rules.register("P", PawnMovement(PAWN_FORWARD))
     return rules
