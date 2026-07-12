@@ -1,18 +1,18 @@
-"""GameEngine: owns the board and clock, and performs game actions.
+"""GameEngine: coordinates the board, clock, rules, and the real-time arbiter.
 
-It is the single writer to the board. ``request_move`` now validates the move with
-the injected RuleEngine and applies it only if legal; ``wait`` advances the clock.
+A move now takes time. ``request_move`` validates with the RuleEngine and, if
+legal, hands the move to the arbiter as a *motion* — the piece stays at its origin,
+marked MOVING, until it arrives. ``wait`` advances the clock and asks the arbiter to
+resolve any motions that have now arrived.
 
-Still absent for now (added at this same seam later):
-- movement over time (Iteration 6) — a move currently completes instantly;
-- captures bookkeeping / game-over (Iterations 4, 9).
-
-The engine knows the board, clock, and rules, but not pixels, clicks, or the text
-format (those belong to the Controller and Text I/O layers).
+The engine no longer mutates the board directly; the arbiter applies a move when it
+completes. The engine knows the board, clock, rules, and arbiter, but not pixels,
+clicks, or the text format (those belong to the Controller and Text I/O layers).
 """
 
 from __future__ import annotations
 
+from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.model.board import Board
 from kfchess.model.position import Position
@@ -20,14 +20,21 @@ from kfchess.rules.rule_engine import RuleEngine
 
 
 class GameEngine:
-    """Validates and applies moves to the board; advances the clock on wait."""
+    """Validates moves, starts timed motions, and advances/resolves the clock."""
 
-    __slots__ = ("_board", "_clock", "_rule_engine")
+    __slots__ = ("_board", "_clock", "_rule_engine", "_arbiter")
 
-    def __init__(self, board: Board, clock: Clock, rule_engine: RuleEngine) -> None:
+    def __init__(
+        self,
+        board: Board,
+        clock: Clock,
+        rule_engine: RuleEngine,
+        arbiter: RealTimeArbiter,
+    ) -> None:
         self._board = board
         self._clock = clock
         self._rule_engine = rule_engine
+        self._arbiter = arbiter
 
     @property
     def board(self) -> Board:
@@ -35,16 +42,17 @@ class GameEngine:
         return self._board
 
     def request_move(self, source: Position, target: Position) -> None:
-        """Move the piece at ``source`` to ``target`` if the move is legal.
+        """Start moving the piece at ``source`` to ``target`` if the move is legal.
 
-        Illegal moves are ignored (the piece stays put). Because legality already
-        confirms a piece is at ``source``, the removal below always finds one.
+        Illegal moves are ignored. Legal ones begin a timed motion; the piece does
+        not appear at the destination until enough time has passed.
         """
         if not self._rule_engine.is_legal_move(self._board, source, target):
             return
-        piece = self._board.remove(source)
-        self._board.place(target, piece)
+        piece = self._board.piece_at(source)
+        self._arbiter.start_motion(piece, source, target, self._clock.now_ms)
 
     def wait(self, ms: int) -> None:
-        """Advance the game clock by ``ms`` milliseconds."""
+        """Advance the clock by ``ms`` and resolve any motions that have arrived."""
         self._clock.advance(ms)
+        self._arbiter.resolve(self._clock.now_ms)

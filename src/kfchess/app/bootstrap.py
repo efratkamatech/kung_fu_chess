@@ -16,7 +16,9 @@ from __future__ import annotations
 from typing import Tuple
 
 from kfchess.app.command_loop import CommandLoop
+from kfchess.config import MS_PER_CELL
 from kfchess.control.controller import Controller
+from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.board import Board
@@ -35,9 +37,10 @@ def build_command_loop() -> CommandLoop:
 
 
 def _build_game(board: Board) -> Tuple[GameEngine, Controller]:
-    """Build the per-fixture game state: clock, rule engine, engine, controller."""
+    """Build the per-fixture game state: clock, rule engine, arbiter, engine, controller."""
     clock = Clock()
     rule_engine = RuleEngine(standard_movement_rules())
-    engine = GameEngine(board, clock, rule_engine)
+    arbiter = RealTimeArbiter(board, MS_PER_CELL)
+    engine = GameEngine(board, clock, rule_engine, arbiter)
     controller = Controller(engine)
     return engine, controller
