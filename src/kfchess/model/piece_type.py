@@ -25,12 +25,16 @@ from dataclasses import dataclass
 class PieceType:
     """Immutable identity of a kind of piece.
 
+    ``is_king`` marks the piece whose capture ends the game (Iteration 9). It is a
+    registry-set flag rather than a hardcoded ``"K"`` check in engine logic.
+
     No ``slots=True``: that dataclass option is Python 3.10+ only and the grader
     runs an older Python (see the note in ``model/position.py``).
     """
 
     letter: str  # canonical uppercase type letter, e.g. "K"
     name: str  # human-readable name, e.g. "king"
+    is_king: bool = False  # capturing this piece ends the game
 
 
 class PieceTypeRegistry:
@@ -64,7 +68,7 @@ class PieceTypeRegistry:
 # The canonical starting set of pieces. This is the single place new standard
 # pieces would be added; custom games can build their own registry instead.
 _STANDARD_PIECES = (
-    PieceType("K", "king"),
+    PieceType("K", "king", is_king=True),
     PieceType("Q", "queen"),
     PieceType("R", "rook"),
     PieceType("B", "bishop"),
