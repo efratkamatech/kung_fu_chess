@@ -23,13 +23,13 @@ from kfchess.model.piece_type import PieceType
 class PieceState(Enum):
     """A piece's lifecycle state.
 
-    Only ``IDLE`` is used in Iteration 1 (nothing moves yet). The remaining states
-    from the design are added in the iteration that introduces them:
-    ``MOVING`` (Iteration 6, movement over time), ``RESTING``/conflict states
-    (Iterations 7-8), ``JUMPING`` (Iteration 11), ``CAPTURED`` (when captures land).
+    ``IDLE`` = settled; ``MOVING`` = in flight between two cells (Iteration 6). The
+    remaining design states are added when their iteration introduces them:
+    ``JUMPING`` (Iteration 11), and ``CAPTURED`` if/when captures need to track it.
     """
 
     IDLE = auto()
+    MOVING = auto()
 
 
 class Piece:
