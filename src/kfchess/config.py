@@ -27,9 +27,15 @@ COMMANDS_SECTION_HEADER = "Commands:"
 EMPTY_CELL = "."
 CELL_SEPARATOR = " "  # single space between cells within a row
 
+# --- Geometry ----------------------------------------------------------------
+# Each board cell is CELL_PX x CELL_PX pixels; a click at pixel (x, y) maps to the
+# cell (row = y // CELL_PX, col = x // CELL_PX).
+CELL_PX = 100
+
 # --- Command names -----------------------------------------------------------
-# Iteration 1 supports only `print board`; `click` and `wait` join in Iteration 2.
 CMD_PRINT_BOARD = "print board"
+CMD_CLICK = "click"  # usage: "click <x> <y>"
+CMD_WAIT = "wait"    # usage: "wait <ms>"
 
 # Color is encoded as a one-letter prefix on each piece token, e.g. "wK", "bR".
 WHITE_PREFIX = "w"
