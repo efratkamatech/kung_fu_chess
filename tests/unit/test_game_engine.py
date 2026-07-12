@@ -97,3 +97,19 @@ def test_no_cooldown_move_again_immediately_after_arrival():
     assert board.piece_at(Position(0, 2)).piece_type.letter == "R"
     assert board.is_empty(Position(0, 0))
     assert board.is_empty(Position(0, 1))
+
+
+def test_no_moves_after_the_king_is_captured():
+    board = Board(2, 3)
+    board.place(Position(0, 0), Piece(PieceType("R", "rook"), Color.WHITE))
+    board.place(Position(0, 2), Piece(PieceType("K", "king", is_king=True), Color.BLACK))
+    black_rook = Piece(PieceType("R", "rook"), Color.BLACK)
+    board.place(Position(1, 0), black_rook)
+    engine = make_engine(board)
+
+    engine.request_move(Position(0, 0), Position(0, 2))  # white rook captures the king
+    engine.wait(2000)                                    # -> game over
+    engine.request_move(Position(1, 0), Position(1, 1))  # ignored
+    engine.wait(1000)                                    # ignored
+    assert board.piece_at(Position(1, 0)) is black_rook  # black rook never moved
+    assert board.is_empty(Position(1, 1))

@@ -34,3 +34,10 @@ def test_standard_set_has_the_six_pieces():
     for letter in "KQRBNP":
         assert letter in registry
     assert registry.get("N").name == "knight"
+
+
+def test_only_the_king_is_flagged_is_king():
+    registry = standard_piece_types()
+    assert registry.get("K").is_king
+    assert not registry.get("Q").is_king
+    assert not registry.get("P").is_king

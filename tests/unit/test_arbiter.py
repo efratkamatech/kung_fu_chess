@@ -68,6 +68,23 @@ def test_arriving_piece_captures_a_settled_piece_at_the_destination():
     arbiter.start_motion(mover, Position(0, 0), Position(0, 2), now_ms=0)
     arbiter.resolve(2000)
     assert board.piece_at(Position(0, 2)) is mover  # captured
+    assert not arbiter.is_game_over  # capturing a non-king does not end the game
+
+
+def king(color=Color.BLACK):
+    return Piece(PieceType("K", "king", is_king=True), color)
+
+
+def test_capturing_a_king_ends_the_game():
+    board = Board(1, 3)
+    white = rook(Color.WHITE)
+    board.place(Position(0, 0), white)
+    board.place(Position(0, 2), king(Color.BLACK))
+    arbiter = RealTimeArbiter(board, MS_PER_CELL)
+    assert not arbiter.is_game_over
+    arbiter.start_motion(white, Position(0, 0), Position(0, 2), now_ms=0)
+    arbiter.resolve(2000)
+    assert arbiter.is_game_over
 
 
 def test_two_enemies_crossing_the_one_that_started_first_wins():
