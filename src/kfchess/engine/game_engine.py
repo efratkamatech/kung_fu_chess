@@ -47,12 +47,19 @@ class GameEngine:
         Illegal moves are ignored. Legal ones begin a timed motion; the piece does
         not appear at the destination until enough time has passed.
         """
+        if self._arbiter.is_game_over:
+            return  # the game has ended; ignore further moves
         if not self._rule_engine.is_legal_move(self._board, source, target):
             return
         piece = self._board.piece_at(source)
         self._arbiter.start_motion(piece, source, target, self._clock.now_ms)
 
     def wait(self, ms: int) -> None:
-        """Advance the clock by ``ms`` and resolve any motions that have arrived."""
+        """Advance the clock by ``ms`` and resolve any motions that have arrived.
+
+        Once the game is over the board is frozen, so waiting does nothing.
+        """
+        if self._arbiter.is_game_over:
+            return
         self._clock.advance(ms)
         self._arbiter.resolve(self._clock.now_ms)
