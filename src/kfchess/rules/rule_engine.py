@@ -5,17 +5,15 @@ strictly read-only: it never mutates the board (that is the GameEngine's job). T
 movement rules are injected, so the set of pieces/geometry is configurable.
 
 It checks shape legality (the piece's geometry reaches the target, with the path
-clear — the path check lives in SlideMovement) and the capture rule (you cannot
-land on your own color; an enemy at the destination is a legal capture).
-
-Deliberately not here yet (added at this same method later):
-- pawn rules (Iteration 5);
-- "can't redirect a piece already moving" (Iteration 7).
+clear — the path check lives in SlideMovement), the capture rule (you cannot land
+on your own color; an enemy at the destination is a legal capture), and that the
+piece is not already in flight (a moving piece cannot be redirected).
 """
 
 from __future__ import annotations
 
 from kfchess.model.board import Board
+from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
 from kfchess.movement.rules import MovementRuleSet
 
@@ -32,6 +30,9 @@ class RuleEngine:
         piece = board.piece_at(source)
         if piece is None:
             return False  # nothing to move
+
+        if piece.state is PieceState.MOVING:
+            return False  # a piece already in flight cannot be redirected
 
         letter = piece.piece_type.letter
         if letter not in self._movement_rules:
