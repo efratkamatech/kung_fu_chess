@@ -17,9 +17,10 @@ from kfchess.config import (
     BOARD_SECTION_HEADER,
     COMMANDS_SECTION_HEADER,
     EMPTY_CELL,
-    ERR_INVALID_PIECE,
     ERR_MISSING_BOARD_SECTION,
     ERR_MISSING_COMMANDS_SECTION,
+    ERR_ROW_WIDTH_MISMATCH,
+    ERR_UNKNOWN_TOKEN,
 )
 from kfchess.model.board import Board
 from kfchess.model.color import Color
@@ -77,10 +78,15 @@ class BoardParser:
 
     def _parse_board(self, board_lines: list[str]) -> Board:
         grid: list[list[Optional[Piece]]] = []
+        width: Optional[int] = None
         for line in board_lines:
             if not line.strip():
                 continue  # skip blank lines (e.g. a stray trailing newline)
             row = [self._parse_cell(token) for token in line.split()]
+            if width is None:
+                width = len(row)
+            elif len(row) != width:
+                raise FixtureError(ERR_ROW_WIDTH_MISMATCH)
             grid.append(row)
         return Board.from_grid(grid)
 
@@ -96,5 +102,5 @@ class BoardParser:
             color = Color.from_prefix(token[0])
             piece_type = self._piece_types.get(token[1:])
         except (ValueError, KeyError):
-            raise FixtureError(ERR_INVALID_PIECE) from None
+            raise FixtureError(ERR_UNKNOWN_TOKEN) from None
         return Piece(piece_type, color)

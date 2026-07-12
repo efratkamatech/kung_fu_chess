@@ -12,7 +12,6 @@ what makes every layer testable in isolation.
 """
 
 from __future__ import annotations
-
 from kfchess.app.command_loop import CommandLoop
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.text_io.board_parser import BoardParser

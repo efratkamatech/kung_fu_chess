@@ -21,9 +21,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class PieceType:
-    """Immutable identity of a kind of piece."""
+    """Immutable identity of a kind of piece.
+
+    No ``slots=True``: that dataclass option is Python 3.10+ only and the grader
+    runs an older Python (see the note in ``model/position.py``).
+    """
 
     letter: str  # canonical uppercase type letter, e.g. "K"
     name: str  # human-readable name, e.g. "king"

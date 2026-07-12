@@ -35,11 +35,22 @@ CMD_PRINT_BOARD = "print board"
 WHITE_PREFIX = "w"
 BLACK_PREFIX = "b"
 
-# --- Validation error codes (emitted verbatim on a malformed fixture) --------
+# --- Validation error codes --------------------------------------------------
+# VPL prints validation errors as "ERROR <CODE>" (confirmed by the grader for
+# UNKNOWN_TOKEN and ROW_WIDTH_MISMATCH). Codes are stored bare; error_message()
+# applies the prefix at the single place errors are emitted, so the format is
+# defined once.
+ERROR_PREFIX = "ERROR "
+
+# Confirmed against VPL:
+ERR_UNKNOWN_TOKEN = "UNKNOWN_TOKEN"             # malformed board cell (bad prefix/letter)
+ERR_ROW_WIDTH_MISMATCH = "ROW_WIDTH_MISMATCH"   # board rows of unequal width
+# Names match the assignment, but exact output not yet confirmed against VPL:
 ERR_MISSING_BOARD_SECTION = "MISSING_BOARD_SECTION"
 ERR_MISSING_COMMANDS_SECTION = "MISSING_COMMANDS_SECTION"
 ERR_UNKNOWN_COMMAND = "UNKNOWN_COMMAND"
-# PROVISIONAL: emitted for a malformed board cell token (bad color prefix or
-# unknown piece letter, e.g. "xK" / "wZ"). The exact token text is not yet
-# confirmed against VPL — verify with a test and change this one line if needed.
-ERR_INVALID_PIECE = "INVALID_PIECE"
+
+
+def error_message(code: str) -> str:
+    """Format a validation code as the exact stdout line: ``ERROR <CODE>``."""
+    return f"{ERROR_PREFIX}{code}"

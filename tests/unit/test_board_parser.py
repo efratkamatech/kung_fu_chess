@@ -1,9 +1,10 @@
 import pytest
 
 from kfchess.config import (
-    ERR_INVALID_PIECE,
     ERR_MISSING_BOARD_SECTION,
     ERR_MISSING_COMMANDS_SECTION,
+    ERR_ROW_WIDTH_MISMATCH,
+    ERR_UNKNOWN_TOKEN,
 )
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.model.position import Position
@@ -38,16 +39,22 @@ def test_missing_commands_section():
     assert exc.value.code == ERR_MISSING_COMMANDS_SECTION
 
 
-def test_unknown_piece_letter_is_invalid_piece():
+def test_unknown_piece_letter_is_unknown_token():
     with pytest.raises(FixtureError) as exc:
         make_parser().parse("Board:\nwZ\nCommands:\nprint board\n")
-    assert exc.value.code == ERR_INVALID_PIECE
+    assert exc.value.code == ERR_UNKNOWN_TOKEN
 
 
-def test_bad_color_prefix_is_invalid_piece():
+def test_bad_color_prefix_is_unknown_token():
     with pytest.raises(FixtureError) as exc:
         make_parser().parse("Board:\nxK\nCommands:\nprint board\n")
-    assert exc.value.code == ERR_INVALID_PIECE
+    assert exc.value.code == ERR_UNKNOWN_TOKEN
+
+
+def test_row_width_mismatch():
+    with pytest.raises(FixtureError) as exc:
+        make_parser().parse("Board:\nwK . .\n. bK\nCommands:\n")
+    assert exc.value.code == ERR_ROW_WIDTH_MISMATCH
 
 
 def test_blank_lines_skipped_and_commands_trimmed():

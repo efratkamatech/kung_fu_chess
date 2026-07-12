@@ -12,7 +12,7 @@ Iteration 1 recognizes only ``print board``; any other command yields
 
 from __future__ import annotations
 
-from kfchess.config import CMD_PRINT_BOARD, ERR_UNKNOWN_COMMAND
+from kfchess.config import CMD_PRINT_BOARD, ERR_UNKNOWN_COMMAND, error_message
 from kfchess.model.board import Board
 from kfchess.text_io.board_parser import BoardParser, FixtureError
 from kfchess.text_io.board_printer import BoardPrinter
@@ -34,7 +34,7 @@ class CommandLoop:
         try:
             fixture = self._parser.parse(text)
         except FixtureError as error:
-            return error.code
+            return error_message(error.code)
 
         outputs = [self._execute(command, fixture.board) for command in fixture.commands]
         return "\n".join(outputs)
@@ -43,4 +43,4 @@ class CommandLoop:
         """Run a single command and return its output line(s)."""
         if command == CMD_PRINT_BOARD:
             return self._printer.render(board)
-        return ERR_UNKNOWN_COMMAND
+        return error_message(ERR_UNKNOWN_COMMAND)
