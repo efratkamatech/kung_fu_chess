@@ -44,6 +44,8 @@ fail_under = 100
 exclude_also = [
     # The standard "run as a script" guard is not exercised by unit tests.
     "if __name__ == .__main__.:",
+    # Protocol / stub method bodies that are only "..." never execute.
+    "^\\s*\\.\\.\\.\\s*$",
 ]
 
 [tool.coverage.html]
