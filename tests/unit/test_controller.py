@@ -6,6 +6,8 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
+from kfchess.movement.rules import standard_movement_rules
+from kfchess.rules.rule_engine import RuleEngine
 
 
 def piece(color=Color.WHITE, letter="K"):
@@ -13,8 +15,8 @@ def piece(color=Color.WHITE, letter="K"):
 
 
 def setup(board):
-    controller = Controller(GameEngine(board, Clock()))
-    return board, controller
+    engine = GameEngine(board, Clock(), RuleEngine(standard_movement_rules()))
+    return board, Controller(engine)
 
 
 def test_select_then_move_via_center_clicks():

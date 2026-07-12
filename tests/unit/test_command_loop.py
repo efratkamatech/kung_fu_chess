@@ -8,12 +8,14 @@ from kfchess.control.controller import Controller
 from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.piece_type import standard_piece_types
+from kfchess.movement.rules import standard_movement_rules
+from kfchess.rules.rule_engine import RuleEngine
 from kfchess.text_io.board_parser import BoardParser
 from kfchess.text_io.board_printer import BoardPrinter
 
 
 def _build_game(board):
-    engine = GameEngine(board, Clock())
+    engine = GameEngine(board, Clock(), RuleEngine(standard_movement_rules()))
     return engine, Controller(engine)
 
 
