@@ -37,7 +37,9 @@ class RuleEngine:
         if letter not in self._movement_rules:
             return False  # a piece with no movement rule can't move (e.g. pawn pre-iter5)
 
-        if not self._movement_rules.get(letter).can_reach(source, target, board):
+        if not self._movement_rules.get(letter).can_reach(
+            piece, source, target, board
+        ):
             return False
 
         # Capture rule: an empty destination is a plain move, an enemy there is a
