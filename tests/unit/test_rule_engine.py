@@ -1,6 +1,6 @@
 from kfchess.model.board import Board
 from kfchess.model.color import Color
-from kfchess.model.piece import Piece
+from kfchess.model.piece import Piece, PieceState
 from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
 from kfchess.movement.rules import standard_movement_rules
@@ -71,3 +71,9 @@ def test_white_pawn_forward_onto_enemy_is_illegal():
     board = board_with("P", color=Color.WHITE, at=(1, 1))
     place(board, "R", Color.BLACK, (0, 1))  # enemy directly ahead
     assert not rule_engine().is_legal_move(board, Position(1, 1), Position(0, 1))
+
+
+def test_a_moving_piece_cannot_be_redirected():
+    board = board_with("R", color=Color.WHITE, at=(0, 0))
+    board.piece_at(Position(0, 0)).state = PieceState.MOVING
+    assert not rule_engine().is_legal_move(board, Position(0, 0), Position(0, 2))

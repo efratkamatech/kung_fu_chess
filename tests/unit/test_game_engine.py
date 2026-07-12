@@ -74,3 +74,26 @@ def test_wait_advances_the_clock():
     clock = Clock()
     make_engine(Board(2, 2), clock).wait(750)
     assert clock.now_ms == 750
+
+
+def test_moving_piece_cannot_be_redirected():
+    board = rook_board()
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(0, 2))  # 2-cell move, arrives 2000
+    engine.wait(500)                                     # in flight
+    engine.request_move(Position(0, 0), Position(0, 1))  # redirect attempt -> ignored
+    engine.wait(2000)                                    # original completes
+    assert board.piece_at(Position(0, 2)).piece_type.letter == "R"  # original target
+    assert board.is_empty(Position(0, 1))
+
+
+def test_no_cooldown_move_again_immediately_after_arrival():
+    board = rook_board()
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(0, 1))  # arrives 1000
+    engine.wait(1000)
+    engine.request_move(Position(0, 1), Position(0, 2))  # move again right away
+    engine.wait(1000)
+    assert board.piece_at(Position(0, 2)).piece_type.letter == "R"
+    assert board.is_empty(Position(0, 0))
+    assert board.is_empty(Position(0, 1))
