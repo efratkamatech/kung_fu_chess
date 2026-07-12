@@ -1,0 +1,4 @@
+# Normalize all text files to LF in the repository and working tree, on every
+# platform. The grader (VPL) runs on Linux and expects '\n'; pinning LF keeps
+# output and fixtures byte-identical whether developed on Windows or Linux.
+* text=auto eol=lf

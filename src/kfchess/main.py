@@ -24,4 +24,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Force '\n' line endings regardless of OS so output is byte-identical on a
+    # Windows dev machine and the (Linux) grader. Without this, Windows would emit
+    # '\r\n' and fail an exact comparison.
+    sys.stdout.reconfigure(newline="\n")
     main()

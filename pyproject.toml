@@ -30,6 +30,8 @@ kfchess = "kfchess.main:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Make the src/ package importable in tests without installing it.
+pythonpath = ["src"]
 
 [tool.coverage.run]
 branch = true
@@ -39,6 +41,10 @@ source = ["kfchess"]
 show_missing = true
 # Fail the run if coverage drops below 100% for the files under test.
 fail_under = 100
+exclude_also = [
+    # The standard "run as a script" guard is not exercised by unit tests.
+    "if __name__ == .__main__.:",
+]
 
 [tool.coverage.html]
 directory = "htmlcov"
