@@ -108,11 +108,12 @@ class PawnMovement:
     """Pawn geometry, which depends on the pawn's colour.
 
     - one step *forward* (by colour) onto an empty cell, or
-    - one step *diagonally forward* onto an enemy (a capture).
+    - one step *diagonally forward* onto an enemy (a capture), or
+    - two steps *forward* from its start row, over a clear path onto an empty cell.
 
-    No two-cell advance and no forward capture yet; those, plus promotion, arrive
-    in Iteration 10. ``forward_by_color`` gives each colour's forward row step
-    (white = -1 "up", black = +1 "down").
+    ``forward_by_color`` gives each colour's forward row step (white = -1 "up",
+    black = +1 "down"). Forward capture is not allowed; promotion is handled as an
+    arrival effect elsewhere (the arbiter), not here.
     """
 
     def __init__(self, forward_by_color: Mapping[Color, int]) -> None:
@@ -131,4 +132,18 @@ class PawnMovement:
         if d_row == forward and abs(d_col) == 1:
             # diagonal: only to capture an enemy piece
             return occupant is not None and occupant.color != piece.color
+        if (
+            d_row == 2 * forward
+            and d_col == 0
+            and source.row == self._start_row(forward, board)
+        ):
+            # double advance from the start row: middle and destination both empty
+            middle = source.translated(forward, 0)
+            return board.piece_at(middle) is None and occupant is None
         return False
+
+    @staticmethod
+    def _start_row(forward: int, board: Board) -> int:
+        """The pawn's start row: one step forward from its back rank."""
+        back_rank = board.rows - 1 if forward < 0 else 0
+        return back_rank + forward
