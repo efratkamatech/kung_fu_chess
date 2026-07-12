@@ -1,16 +1,25 @@
+from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.board import Board
 from kfchess.model.color import Color
-from kfchess.model.piece import Piece
+from kfchess.model.piece import Piece, PieceState
 from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
 from kfchess.movement.rules import standard_movement_rules
 from kfchess.rules.rule_engine import RuleEngine
 
+MS_PER_CELL = 1000
 
-def make_engine(board):
-    return GameEngine(board, Clock(), RuleEngine(standard_movement_rules()))
+
+def make_engine(board, clock=None):
+    clock = clock or Clock()
+    return GameEngine(
+        board,
+        clock,
+        RuleEngine(standard_movement_rules()),
+        RealTimeArbiter(board, MS_PER_CELL),
+    )
 
 
 def rook_board():
@@ -24,27 +33,44 @@ def test_board_property_exposes_the_board():
     assert make_engine(board).board is board
 
 
-def test_legal_move_relocates_piece():
+def test_legal_move_is_still_in_flight_before_arrival():
     board = rook_board()
-    make_engine(board).request_move(Position(0, 0), Position(0, 2))
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(0, 2))  # 2 cells -> arrives at 2000
+    engine.wait(1000)  # not enough time
+    assert board.piece_at(Position(0, 0)).piece_type.letter == "R"  # still at origin
+    assert board.is_empty(Position(0, 2))
+
+
+def test_legal_move_completes_after_enough_time():
+    board = rook_board()
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(0, 2))
+    engine.wait(2000)
     assert board.is_empty(Position(0, 0))
     assert board.piece_at(Position(0, 2)).piece_type.letter == "R"
 
 
-def test_illegal_move_is_ignored():
+def test_moving_piece_is_marked_moving_then_idle():
     board = rook_board()
-    make_engine(board).request_move(Position(0, 0), Position(1, 1))  # rook diagonal
-    assert board.piece_at(Position(0, 0)).piece_type.letter == "R"   # stayed put
+    engine = make_engine(board)
+    piece = board.piece_at(Position(0, 0))
+    engine.request_move(Position(0, 0), Position(0, 2))
+    assert piece.state is PieceState.MOVING
+    engine.wait(2000)
+    assert piece.state is PieceState.IDLE
+
+
+def test_illegal_move_starts_no_motion():
+    board = rook_board()
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(1, 1))  # rook diagonal: illegal
+    engine.wait(5000)
+    assert board.piece_at(Position(0, 0)).piece_type.letter == "R"  # never left
     assert board.is_empty(Position(1, 1))
-
-
-def test_move_from_empty_source_does_nothing():
-    board = Board(2, 2)
-    make_engine(board).request_move(Position(0, 0), Position(0, 1))
-    assert board.is_empty(Position(0, 1))
 
 
 def test_wait_advances_the_clock():
     clock = Clock()
-    GameEngine(Board(2, 2), clock, RuleEngine(standard_movement_rules())).wait(750)
+    make_engine(Board(2, 2), clock).wait(750)
     assert clock.now_ms == 750

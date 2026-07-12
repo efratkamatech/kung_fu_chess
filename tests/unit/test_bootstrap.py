@@ -11,10 +11,11 @@ def test_built_loop_is_fully_wired_and_runs():
     assert out == "wK"
 
 
-def test_built_loop_handles_click_and_move():
-    # Exercises the per-fixture game factory wired in bootstrap.
+def test_built_loop_handles_click_move_and_arrival():
+    # Exercises the per-fixture game factory wired in bootstrap, including the
+    # timed motion (the king only appears at the center after enough wait).
     text = (
         "Board:\nwK . .\n. . .\n. . .\n"
-        "Commands:\nclick 50 50\nclick 150 150\nprint board\n"
+        "Commands:\nclick 50 50\nclick 150 150\nwait 1000\nprint board\n"
     )
     assert build_command_loop().run(text) == ". . .\n. wK .\n. . ."

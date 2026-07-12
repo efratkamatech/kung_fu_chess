@@ -4,7 +4,9 @@ from kfchess.config import (
     ERR_UNKNOWN_COMMAND,
     error_message,
 )
+from kfchess.config import MS_PER_CELL
 from kfchess.control.controller import Controller
+from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.piece_type import standard_piece_types
@@ -15,7 +17,12 @@ from kfchess.text_io.board_printer import BoardPrinter
 
 
 def _build_game(board):
-    engine = GameEngine(board, Clock(), RuleEngine(standard_movement_rules()))
+    engine = GameEngine(
+        board,
+        Clock(),
+        RuleEngine(standard_movement_rules()),
+        RealTimeArbiter(board, MS_PER_CELL),
+    )
     return engine, Controller(engine)
 
 
