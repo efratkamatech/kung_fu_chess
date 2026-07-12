@@ -10,18 +10,20 @@ from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.piece_type import standard_piece_types
-from kfchess.movement.rules import standard_movement_rules
+from kfchess.movement.rules import PAWN_FORWARD, standard_movement_rules
+from kfchess.rules.promotion import Promotion
 from kfchess.rules.rule_engine import RuleEngine
 from kfchess.text_io.board_parser import BoardParser
 from kfchess.text_io.board_printer import BoardPrinter
 
 
 def _build_game(board):
+    promotion = Promotion(PAWN_FORWARD, standard_piece_types().get("Q"))
     engine = GameEngine(
         board,
         Clock(),
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL),
+        RealTimeArbiter(board, MS_PER_CELL, promotion),
     )
     return engine, Controller(engine)
 

@@ -151,3 +151,35 @@ def test_black_pawn_advances_downward():
     board = Board(3, 3)
     assert pawn().can_reach(BLACK_PAWN, Position(0, 1), Position(1, 1), board)
     assert not pawn().can_reach(BLACK_PAWN, Position(1, 1), Position(0, 1), board)
+
+
+def test_white_pawn_double_from_start_row():
+    board = Board(5, 3)  # white start row = rows - 2 = 3
+    assert pawn().can_reach(WHITE_PAWN, Position(3, 1), Position(1, 1), board)
+
+
+def test_black_pawn_double_from_start_row():
+    board = Board(5, 3)  # black start row = 1
+    assert pawn().can_reach(BLACK_PAWN, Position(1, 1), Position(3, 1), board)
+
+
+def test_pawn_double_from_non_start_row_is_rejected():
+    board = Board(4, 3)  # white start row = 2; the pawn sits on row 3
+    assert not pawn().can_reach(WHITE_PAWN, Position(3, 1), Position(1, 1), board)
+
+
+def test_pawn_double_blocked_in_the_middle_is_rejected():
+    board = Board(5, 3)
+    put(board, (2, 1), color=Color.BLACK)  # blocker on the intermediate cell
+    assert not pawn().can_reach(WHITE_PAWN, Position(3, 1), Position(1, 1), board)
+
+
+def test_pawn_double_onto_an_occupied_destination_is_rejected():
+    board = Board(5, 3)
+    put(board, (1, 1), color=Color.BLACK)  # destination occupied
+    assert not pawn().can_reach(WHITE_PAWN, Position(3, 1), Position(1, 1), board)
+
+
+def test_pawn_cannot_double_diagonally():
+    board = Board(5, 3)  # two rows AND a column change
+    assert not pawn().can_reach(WHITE_PAWN, Position(3, 1), Position(1, 2), board)

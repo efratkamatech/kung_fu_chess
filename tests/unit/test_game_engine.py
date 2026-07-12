@@ -6,10 +6,12 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece, PieceState
 from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
-from kfchess.movement.rules import standard_movement_rules
+from kfchess.movement.rules import PAWN_FORWARD, standard_movement_rules
+from kfchess.rules.promotion import Promotion
 from kfchess.rules.rule_engine import RuleEngine
 
 MS_PER_CELL = 1000
+PROMOTION = Promotion(PAWN_FORWARD, PieceType("Q", "queen"))
 
 
 def make_engine(board, clock=None):
@@ -18,7 +20,7 @@ def make_engine(board, clock=None):
         board,
         clock,
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL),
+        RealTimeArbiter(board, MS_PER_CELL, PROMOTION),
     )
 
 

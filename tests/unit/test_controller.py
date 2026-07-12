@@ -8,10 +8,12 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
-from kfchess.movement.rules import standard_movement_rules
+from kfchess.movement.rules import PAWN_FORWARD, standard_movement_rules
+from kfchess.rules.promotion import Promotion
 from kfchess.rules.rule_engine import RuleEngine
 
 BIG_WAIT = 100000  # enough to complete any move on these small boards
+PROMOTION = Promotion(PAWN_FORWARD, PieceType("Q", "queen"))
 
 
 def piece(color=Color.WHITE, letter="K"):
@@ -23,7 +25,7 @@ def setup(board):
         board,
         Clock(),
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL),
+        RealTimeArbiter(board, MS_PER_CELL, PROMOTION),
     )
     return board, Controller(engine), engine
 
