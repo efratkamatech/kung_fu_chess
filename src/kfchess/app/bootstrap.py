@@ -23,7 +23,8 @@ from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.board import Board
 from kfchess.model.piece_type import standard_piece_types
-from kfchess.movement.rules import standard_movement_rules
+from kfchess.movement.rules import PAWN_FORWARD, standard_movement_rules
+from kfchess.rules.promotion import Promotion
 from kfchess.rules.rule_engine import RuleEngine
 from kfchess.text_io.board_parser import BoardParser
 from kfchess.text_io.board_printer import BoardPrinter
@@ -40,7 +41,8 @@ def _build_game(board: Board) -> Tuple[GameEngine, Controller]:
     """Build the per-fixture game state: clock, rule engine, arbiter, engine, controller."""
     clock = Clock()
     rule_engine = RuleEngine(standard_movement_rules())
-    arbiter = RealTimeArbiter(board, MS_PER_CELL)
+    promotion = Promotion(PAWN_FORWARD, standard_piece_types().get("Q"))
+    arbiter = RealTimeArbiter(board, MS_PER_CELL, promotion)
     engine = GameEngine(board, clock, rule_engine, arbiter)
     controller = Controller(engine)
     return engine, controller

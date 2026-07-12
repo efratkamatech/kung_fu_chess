@@ -24,6 +24,7 @@ from typing import List, Set
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
 from kfchess.model.position import Position
+from kfchess.rules.promotion import Promotion
 
 
 @dataclass(frozen=True)
@@ -41,9 +42,12 @@ class Motion:
 class RealTimeArbiter:
     """Tracks active motions and applies them — resolving collisions by start order."""
 
-    def __init__(self, board: Board, ms_per_cell: int) -> None:
+    def __init__(
+        self, board: Board, ms_per_cell: int, promotion: Promotion
+    ) -> None:
         self._board = board
         self._ms_per_cell = ms_per_cell
+        self._promotion = promotion
         self._motions: List[Motion] = []
         self._next_sequence = 0
         self._game_over = False
@@ -87,6 +91,7 @@ class RealTimeArbiter:
                     self._game_over = True  # capturing a king ends the game
             self._board.place(motion.target, motion.piece)
             motion.piece.state = PieceState.IDLE
+            self._promotion.apply(motion.piece, motion.target, self._board)
 
         # Keep only motions still in flight whose piece was not captured.
         self._motions = [
