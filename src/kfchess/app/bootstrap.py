@@ -21,6 +21,8 @@ from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.board import Board
 from kfchess.model.piece_type import standard_piece_types
+from kfchess.movement.rules import standard_movement_rules
+from kfchess.rules.rule_engine import RuleEngine
 from kfchess.text_io.board_parser import BoardParser
 from kfchess.text_io.board_printer import BoardPrinter
 
@@ -33,8 +35,9 @@ def build_command_loop() -> CommandLoop:
 
 
 def _build_game(board: Board) -> Tuple[GameEngine, Controller]:
-    """Build the per-fixture game state: clock, engine, and controller."""
+    """Build the per-fixture game state: clock, rule engine, engine, controller."""
     clock = Clock()
-    engine = GameEngine(board, clock)
+    rule_engine = RuleEngine(standard_movement_rules())
+    engine = GameEngine(board, clock, rule_engine)
     controller = Controller(engine)
     return engine, controller
