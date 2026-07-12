@@ -1,22 +1,27 @@
 """Composable movement primitives.
 
-A movement primitive answers one question: starting from ``source``, can a piece
+A movement primitive answers one question: can ``piece``, starting at ``source``,
 reach ``target`` on this ``board`` using this kind of geometry? New pieces are
-built by combining a primitive with *data* (which directions, which offsets) — not
-by writing new branching logic. That is the design's "pieces are registered, not
-coded" rule.
+built by combining a primitive with *data* (directions, offsets, forward step) —
+not by writing new branching logic. That is the design's "pieces are registered,
+not coded" rule.
 
-``SlideMovement`` also checks that the path *between* source and target is clear
-(it cannot slide through a piece); the destination cell itself is left to the
-RuleEngine, which knows whether landing there is a capture or blocked by a friend.
-``OffsetMovement`` (the knight) ignores the path entirely — it jumps over blockers.
+``can_reach`` receives the moving ``piece`` because some geometry depends on it: a
+pawn advances by its color and captures only diagonally. Direction-only primitives
+(slide, offset) accept the argument and ignore it.
+
+``SlideMovement`` also checks that the path *between* source and target is clear;
+the destination cell is left to the RuleEngine (capture vs. blocked-by-friend).
+``OffsetMovement`` (the knight) ignores the path — it jumps over blockers.
 """
 
 from __future__ import annotations
 
-from typing import Iterable, Optional, Protocol, Tuple
+from typing import Iterable, Mapping, Optional, Protocol, Tuple
 
 from kfchess.model.board import Board
+from kfchess.model.color import Color
+from kfchess.model.piece import Piece
 from kfchess.model.position import Position
 
 Vector = Tuple[int, int]  # a (d_row, d_col) step or offset
@@ -25,7 +30,9 @@ Vector = Tuple[int, int]  # a (d_row, d_col) step or offset
 class Movement(Protocol):
     """The common shape of every primitive: decide if a move is reachable."""
 
-    def can_reach(self, source: Position, target: Position, board: Board) -> bool: ...
+    def can_reach(
+        self, piece: Piece, source: Position, target: Position, board: Board
+    ) -> bool: ...
 
 
 def _unit(delta: int) -> int:
@@ -41,7 +48,7 @@ class SlideMovement:
     """Move any number of cells (up to ``max_distance``) along fixed directions.
 
     Rook = the orthogonal directions; bishop = the diagonals; queen = both;
-    king = both with ``max_distance=1``.
+    king = both with ``max_distance=1``. Colour-independent, so ``piece`` is unused.
     """
 
     def __init__(
@@ -50,7 +57,9 @@ class SlideMovement:
         self._directions = frozenset(directions)
         self._max_distance = max_distance
 
-    def can_reach(self, source: Position, target: Position, board: Board) -> bool:
+    def can_reach(
+        self, piece: Piece, source: Position, target: Position, board: Board
+    ) -> bool:
         d_row = target.row - source.row
         d_col = target.col - source.col
         if d_row == 0 and d_col == 0:
@@ -70,8 +79,8 @@ class SlideMovement:
             return False
 
         # The path must be clear: every cell strictly between source and target
-        # (i.e. steps 1 .. distance-1) must be empty. The destination itself is not
-        # checked here — landing there may be a capture, which the RuleEngine judges.
+        # (steps 1 .. distance-1) must be empty. The destination is not checked
+        # here — landing there may be a capture, which the RuleEngine judges.
         for i in range(1, distance):
             between = source.translated(step[0] * i, step[1] * i)
             if board.piece_at(between) is not None:
@@ -80,11 +89,46 @@ class SlideMovement:
 
 
 class OffsetMovement:
-    """Jump straight to ``source`` + one of a fixed set of offsets (the knight)."""
+    """Jump straight to ``source`` + one of a fixed set of offsets (the knight).
+
+    Colour-independent and path-independent, so ``piece`` and ``board`` are unused.
+    """
 
     def __init__(self, offsets: Iterable[Vector]) -> None:
         self._offsets = frozenset(offsets)
 
-    def can_reach(self, source: Position, target: Position, board: Board) -> bool:
+    def can_reach(
+        self, piece: Piece, source: Position, target: Position, board: Board
+    ) -> bool:
         delta = (target.row - source.row, target.col - source.col)
         return delta in self._offsets
+
+
+class PawnMovement:
+    """Pawn geometry, which depends on the pawn's colour.
+
+    - one step *forward* (by colour) onto an empty cell, or
+    - one step *diagonally forward* onto an enemy (a capture).
+
+    No two-cell advance and no forward capture yet; those, plus promotion, arrive
+    in Iteration 10. ``forward_by_color`` gives each colour's forward row step
+    (white = -1 "up", black = +1 "down").
+    """
+
+    def __init__(self, forward_by_color: Mapping[Color, int]) -> None:
+        self._forward = dict(forward_by_color)
+
+    def can_reach(
+        self, piece: Piece, source: Position, target: Position, board: Board
+    ) -> bool:
+        forward = self._forward[piece.color]
+        d_row = target.row - source.row
+        d_col = target.col - source.col
+        occupant = board.piece_at(target)
+
+        if d_row == forward and d_col == 0:
+            return occupant is None  # forward: only into an empty cell
+        if d_row == forward and abs(d_col) == 1:
+            # diagonal: only to capture an enemy piece
+            return occupant is not None and occupant.color != piece.color
+        return False
