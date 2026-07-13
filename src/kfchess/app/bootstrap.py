@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Tuple
 
 from kfchess.app.command_loop import CommandLoop
-from kfchess.config import MS_PER_CELL
+from kfchess.config import JUMP_DURATION_MS, MS_PER_CELL
 from kfchess.control.controller import Controller
 from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
@@ -42,7 +42,7 @@ def _build_game(board: Board) -> Tuple[GameEngine, Controller]:
     clock = Clock()
     rule_engine = RuleEngine(standard_movement_rules())
     promotion = Promotion(PAWN_FORWARD, standard_piece_types().get("Q"))
-    arbiter = RealTimeArbiter(board, MS_PER_CELL, promotion)
+    arbiter = RealTimeArbiter(board, MS_PER_CELL, promotion, JUMP_DURATION_MS)
     engine = GameEngine(board, clock, rule_engine, arbiter)
     controller = Controller(engine)
     return engine, controller
