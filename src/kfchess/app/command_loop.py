@@ -20,6 +20,7 @@ from typing import Callable, Optional, Tuple
 
 from kfchess.config import (
     CMD_CLICK,
+    CMD_JUMP,
     CMD_PRINT_BOARD,
     CMD_WAIT,
     ERR_UNKNOWN_COMMAND,
@@ -73,6 +74,9 @@ class CommandLoop:
         verb = parts[0]
         if verb == CMD_CLICK:
             controller.click(int(parts[1]), int(parts[2]))
+            return None
+        if verb == CMD_JUMP:
+            controller.jump(int(parts[1]), int(parts[2]))
             return None
         if verb == CMD_WAIT:
             engine.wait(int(parts[1]))
