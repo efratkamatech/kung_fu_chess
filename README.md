@@ -12,6 +12,8 @@ RealTimeArbiter → Controller → Text I/O). The program reads commands from
 standard input and writes board output to standard output; output is exact
 (no prompts, no debug text).
 
+The full backend design is documented in [docs/architecture.md](docs/architecture.md).
+
 ## Layout
 
 ```
