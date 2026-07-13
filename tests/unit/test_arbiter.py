@@ -8,11 +8,12 @@ from kfchess.movement.rules import PAWN_FORWARD
 from kfchess.rules.promotion import Promotion
 
 MS_PER_CELL = 1000
+JUMP_DURATION_MS = 1000
 PROMOTION = Promotion(PAWN_FORWARD, PieceType("Q", "queen"))
 
 
 def make_arbiter(board):
-    return RealTimeArbiter(board, MS_PER_CELL, PROMOTION)
+    return RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS)
 
 
 def rook(color=Color.WHITE):
@@ -134,3 +135,72 @@ def test_arriving_pawn_on_its_far_row_is_promoted():
     arbiter.start_motion(pawn, Position(1, 1), Position(0, 1), now_ms=0)  # white forward
     arbiter.resolve(1000)
     assert board.piece_at(Position(0, 1)).piece_type.letter == "Q"
+
+
+def test_jump_lands_in_place_when_no_one_arrives():
+    board = Board(1, 3)
+    piece = rook(Color.WHITE)
+    board.place(Position(0, 1), piece)
+    arbiter = make_arbiter(board)
+    arbiter.start_jump(piece, Position(0, 1), now_ms=0)  # airborne until 1000
+    assert piece.state is PieceState.JUMPING
+    arbiter.resolve(500)  # still airborne (before the window ends)
+    assert piece.state is PieceState.JUMPING
+    arbiter.resolve(1000)  # window ends -> lands, unmoved
+    assert piece.state is PieceState.IDLE
+    assert board.piece_at(Position(0, 1)) is piece
+
+
+def test_airborne_piece_captures_an_arriving_enemy():
+    board = Board(1, 3)
+    jumper = rook(Color.WHITE)
+    attacker = rook(Color.BLACK)
+    board.place(Position(0, 0), jumper)
+    board.place(Position(0, 1), attacker)
+    arbiter = make_arbiter(board)
+    arbiter.start_jump(jumper, Position(0, 0), now_ms=0)  # airborne until 1000
+    arbiter.start_motion(attacker, Position(0, 1), Position(0, 0), now_ms=0)  # arrives 1000
+    arbiter.resolve(1000)  # arrives exactly as the jump ends -> jumper captures it
+    assert board.piece_at(Position(0, 0)) is jumper
+    assert board.is_empty(Position(0, 1))
+    assert jumper.state is PieceState.IDLE
+
+
+def test_enemy_arriving_after_the_window_captures_normally():
+    board = Board(1, 3)
+    jumper = rook(Color.WHITE)
+    attacker = rook(Color.BLACK)
+    board.place(Position(0, 0), jumper)
+    board.place(Position(0, 2), attacker)
+    arbiter = make_arbiter(board)
+    arbiter.start_jump(jumper, Position(0, 0), now_ms=0)  # airborne until 1000
+    arbiter.start_motion(attacker, Position(0, 2), Position(0, 0), now_ms=0)  # arrives 2000
+    arbiter.resolve(2000)  # 2000 > jump end 1000 -> normal capture of the (landed) jumper
+    assert board.piece_at(Position(0, 0)) is attacker
+
+
+def test_airborne_defender_ignores_a_friendly_arriver():
+    board = Board(1, 3)
+    jumper = rook(Color.WHITE)
+    friend = rook(Color.WHITE)
+    board.place(Position(0, 0), jumper)
+    board.place(Position(0, 1), friend)
+    arbiter = make_arbiter(board)
+    arbiter.start_jump(jumper, Position(0, 0), now_ms=0)
+    arbiter.start_motion(friend, Position(0, 1), Position(0, 0), now_ms=0)  # arrives 1000
+    arbiter.resolve(1000)  # same colour -> not an airborne capture; normal resolution
+    assert board.piece_at(Position(0, 0)) is friend
+
+
+def test_airborne_defender_only_matches_its_own_cell():
+    board = Board(1, 3)
+    jumper = rook(Color.WHITE)
+    attacker = rook(Color.BLACK)
+    board.place(Position(0, 2), jumper)
+    board.place(Position(0, 1), attacker)
+    arbiter = make_arbiter(board)
+    arbiter.start_jump(jumper, Position(0, 2), now_ms=0)  # jump on (0,2)
+    arbiter.start_motion(attacker, Position(0, 1), Position(0, 0), now_ms=0)  # arrives at (0,0)
+    arbiter.resolve(1000)  # attacker's cell differs from the jump cell -> normal move
+    assert board.piece_at(Position(0, 0)) is attacker
+    assert board.piece_at(Position(0, 2)) is jumper  # jumper landed, untouched

@@ -11,6 +11,7 @@ from kfchess.rules.promotion import Promotion
 from kfchess.rules.rule_engine import RuleEngine
 
 MS_PER_CELL = 1000
+JUMP_DURATION_MS = 1000
 PROMOTION = Promotion(PAWN_FORWARD, PieceType("Q", "queen"))
 
 
@@ -20,7 +21,7 @@ def make_engine(board, clock=None):
         board,
         clock,
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL, PROMOTION),
+        RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS),
     )
 
 
@@ -115,3 +116,37 @@ def test_no_moves_after_the_king_is_captured():
     engine.wait(1000)                                    # ignored
     assert board.piece_at(Position(1, 0)) is black_rook  # black rook never moved
     assert board.is_empty(Position(1, 1))
+
+
+def test_request_jump_makes_a_piece_jump():
+    board = Board(3, 3)
+    piece = Piece(PieceType("K", "king"), Color.WHITE)
+    board.place(Position(1, 1), piece)
+    make_engine(board).request_jump(Position(1, 1))
+    assert piece.state is PieceState.JUMPING
+
+
+def test_request_jump_on_an_empty_cell_is_ignored():
+    board = Board(3, 3)
+    make_engine(board).request_jump(Position(1, 1))  # nothing there -> no error
+
+
+def test_a_moving_piece_cannot_jump():
+    board = rook_board()
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(0, 2))  # rook is now MOVING
+    engine.request_jump(Position(0, 0))                  # ignored
+    assert board.piece_at(Position(0, 0)).state is PieceState.MOVING
+
+
+def test_no_jump_after_game_over():
+    board = Board(2, 3)
+    board.place(Position(0, 0), Piece(PieceType("R", "rook"), Color.WHITE))
+    board.place(Position(0, 2), Piece(PieceType("K", "king", is_king=True), Color.BLACK))
+    black_rook = Piece(PieceType("R", "rook"), Color.BLACK)
+    board.place(Position(1, 0), black_rook)
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(0, 2))  # capture the king
+    engine.wait(2000)                                    # -> game over
+    engine.request_jump(Position(1, 0))                  # ignored
+    assert black_rook.state is PieceState.IDLE

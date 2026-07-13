@@ -4,7 +4,7 @@ from kfchess.config import (
     ERR_UNKNOWN_COMMAND,
     error_message,
 )
-from kfchess.config import MS_PER_CELL
+from kfchess.config import JUMP_DURATION_MS, MS_PER_CELL
 from kfchess.control.controller import Controller
 from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
@@ -23,7 +23,7 @@ def _build_game(board):
         board,
         Clock(),
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL, promotion),
+        RealTimeArbiter(board, MS_PER_CELL, promotion, JUMP_DURATION_MS),
     )
     return engine, Controller(engine)
 
@@ -64,3 +64,11 @@ def test_click_move_wait_then_print():
 def test_click_and_wait_alone_produce_no_output():
     out = make_loop().run("Board:\nwK .\n. .\nCommands:\nclick 50 50\nwait 500\n")
     assert out == ""
+
+
+def test_jump_command_is_dispatched():
+    text = (
+        "Board:\n. . .\n. wK .\n. . .\n"
+        "Commands:\njump 150 150\nwait 1000\nprint board\n"
+    )
+    assert make_loop().run(text) == ". . .\n. wK .\n. . ."

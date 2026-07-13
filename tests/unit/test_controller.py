@@ -1,11 +1,11 @@
-from kfchess.config import MS_PER_CELL
+from kfchess.config import JUMP_DURATION_MS, MS_PER_CELL
 from kfchess.control.controller import Controller
 from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.board import Board
 from kfchess.model.color import Color
-from kfchess.model.piece import Piece
+from kfchess.model.piece import Piece, PieceState
 from kfchess.model.piece_type import PieceType
 from kfchess.model.position import Position
 from kfchess.movement.rules import PAWN_FORWARD, standard_movement_rules
@@ -25,7 +25,7 @@ def setup(board):
         board,
         Clock(),
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL, PROMOTION),
+        RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS),
     )
     return board, Controller(engine), engine
 
@@ -84,3 +84,19 @@ def test_move_onto_enemy_relocates_over_it():
     engine.wait(BIG_WAIT)
     assert board.is_empty(Position(0, 0))
     assert board.piece_at(Position(0, 1)) is white
+
+
+def test_jump_makes_the_clicked_piece_jump():
+    board, controller, _ = setup(Board(3, 3))
+    p = piece()
+    board.place(Position(1, 1), p)
+    controller.jump(150, 150)  # center of (1,1)
+    assert p.state is PieceState.JUMPING
+
+
+def test_off_board_jump_is_ignored():
+    board, controller, _ = setup(Board(2, 2))
+    p = piece()
+    board.place(Position(0, 0), p)
+    controller.jump(9999, 9999)  # off board -> ignored
+    assert p.state is PieceState.IDLE

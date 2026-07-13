@@ -1,0 +1,8 @@
+Board:
+. . .
+. wK .
+. . .
+Commands:
+jump 150 150
+wait 1000
+print board
