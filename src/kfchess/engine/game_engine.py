@@ -15,6 +15,7 @@ from __future__ import annotations
 from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.model.board import Board
+from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
 from kfchess.rules.rule_engine import RuleEngine
 
@@ -53,6 +54,22 @@ class GameEngine:
             return
         piece = self._board.piece_at(source)
         self._arbiter.start_motion(piece, source, target, self._clock.now_ms)
+
+    def request_jump(self, cell: Position) -> None:
+        """Make the piece on ``cell`` jump in place, if it can.
+
+        Ignored once the game is over, if the cell is empty, or if the piece is
+        already moving (a moving piece cannot jump). ``cell`` is assumed on-board
+        (the Controller checks bounds before calling).
+        """
+        if self._arbiter.is_game_over:
+            return
+        piece = self._board.piece_at(cell)
+        if piece is None:
+            return
+        if piece.state is PieceState.MOVING:
+            return
+        self._arbiter.start_jump(piece, cell, self._clock.now_ms)
 
     def wait(self, ms: int) -> None:
         """Advance the clock by ``ms`` and resolve any motions that have arrived.
