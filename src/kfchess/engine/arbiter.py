@@ -1,25 +1,30 @@
-"""RealTimeArbiter: moves take time, and crossing pieces collide.
+"""RealTimeArbiter: moves take time, pieces collide, and pieces can jump in place.
 
-Owns the in-flight motions. Starting a motion records where a piece is going, when
-it started, and when it will arrive (``now + distance * ms_per_cell``); the piece
-stays on the board at its origin, marked ``MOVING``, until then.
+Owns the in-flight motions and the active jumps.
 
-``resolve`` applies every motion that has arrived, in **start order** (earlier
-start time first; command order breaks ties). Applying a motion moves the piece to
-its destination and captures whatever piece is there. Because a moving piece stays
-at its origin until it arrives, two enemies crossing toward each other's squares
-are resolved by this rule automatically: the one that started first lands on the
-other (still sitting at its origin) and captures it — and the captured piece's own
-motion is cancelled so it cannot also complete.
+Motions: starting one records where a piece is going, when it started, and when it
+arrives (``now + distance * ms_per_cell``); the piece stays at its origin, marked
+MOVING, until then. ``resolve`` applies arrived motions in start order (see the
+collision note below).
+
+Jumps: a jump keeps a piece airborne *in place* on its cell (marked JUMPING) until
+``now + jump_duration_ms``. While airborne, if an enemy moving piece arrives on that
+cell (arrival time at or before the jump's end), the jumper captures the arriver
+instead of the other way round; the jumper does not move. If nothing arrives, the
+jump lands (returns to IDLE) with the piece unmoved.
+
+Collisions: because a moving piece stays at its origin until it arrives, two enemies
+crossing toward each other's squares are resolved by resolving arrivals in start
+order and cancelling a captured piece's motion — the one that started first wins.
 
 The arbiter knows the board, positions, and time, but not chess legality (judged by
-the RuleEngine before a motion starts), pixels, or the text format.
+the RuleEngine before an action starts), pixels, or the text format.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Set
+from typing import List, Optional, Set
 
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
@@ -39,16 +44,31 @@ class Motion:
     sequence: int  # order the motion was started (tie-breaker for "started first")
 
 
+@dataclass(frozen=True)
+class Jump:
+    """A piece airborne in place on ``cell`` until ``end_ms``."""
+
+    piece: Piece
+    cell: Position
+    end_ms: int
+
+
 class RealTimeArbiter:
-    """Tracks active motions and applies them — resolving collisions by start order."""
+    """Tracks active motions and jumps and applies them as time advances."""
 
     def __init__(
-        self, board: Board, ms_per_cell: int, promotion: Promotion
+        self,
+        board: Board,
+        ms_per_cell: int,
+        promotion: Promotion,
+        jump_duration_ms: int,
     ) -> None:
         self._board = board
         self._ms_per_cell = ms_per_cell
         self._promotion = promotion
+        self._jump_duration_ms = jump_duration_ms
         self._motions: List[Motion] = []
+        self._jumps: List[Jump] = []
         self._next_sequence = 0
         self._game_over = False
 
@@ -60,10 +80,7 @@ class RealTimeArbiter:
     def start_motion(
         self, piece: Piece, source: Position, target: Position, now_ms: int
     ) -> None:
-        """Begin moving ``piece`` from ``source`` to ``target`` starting at ``now_ms``.
-
-        The piece stays on the board at ``source`` (marked MOVING) until it arrives.
-        """
+        """Begin moving ``piece`` from ``source`` to ``target`` starting at ``now_ms``."""
         distance = max(
             abs(target.row - source.row), abs(target.col - source.col)
         )
@@ -74,8 +91,13 @@ class RealTimeArbiter:
         self._next_sequence += 1
         piece.state = PieceState.MOVING
 
+    def start_jump(self, piece: Piece, cell: Position, now_ms: int) -> None:
+        """Make ``piece`` jump in place on ``cell``, airborne until the duration passes."""
+        self._jumps.append(Jump(piece, cell, now_ms + self._jump_duration_ms))
+        piece.state = PieceState.JUMPING
+
     def resolve(self, now_ms: int) -> None:
-        """Apply every motion that has arrived by ``now_ms``, in start order."""
+        """Apply arrivals (in start order) and land jumps whose window has ended."""
         arrived = [m for m in self._motions if m.arrival_ms <= now_ms]
         arrived.sort(key=lambda m: (m.start_ms, m.sequence))
 
@@ -83,6 +105,17 @@ class RealTimeArbiter:
         for motion in arrived:
             if motion.piece in captured:
                 continue  # captured (and vacated) before its own motion resolved
+
+            defender = self._airborne_defender(
+                motion.target, motion.piece, motion.arrival_ms
+            )
+            if defender is not None:
+                # The airborne jumper captures the arriving enemy; it does not move.
+                self._board.remove(motion.source)
+                captured.add(motion.piece)
+                self._land(defender)
+                continue
+
             self._board.remove(motion.source)
             occupant = self._board.piece_at(motion.target)
             if occupant is not None:
@@ -99,3 +132,26 @@ class RealTimeArbiter:
             for m in self._motions
             if m.arrival_ms > now_ms and m.piece not in captured
         ]
+
+        # Land any jumps whose airborne window has ended (with nothing to capture).
+        for jump in list(self._jumps):
+            if jump.end_ms <= now_ms:
+                self._land(jump.piece)
+
+    def _airborne_defender(
+        self, cell: Position, arriver: Piece, arrival_ms: int
+    ) -> Optional[Piece]:
+        """An enemy jumper still airborne on ``cell`` when ``arriver`` reaches it."""
+        for jump in self._jumps:
+            if (
+                jump.cell == cell
+                and jump.piece.color != arriver.color
+                and arrival_ms <= jump.end_ms
+            ):
+                return jump.piece
+        return None
+
+    def _land(self, piece: Piece) -> None:
+        """Return a jumping piece to rest, in place, and drop its jump."""
+        piece.state = PieceState.IDLE
+        self._jumps = [j for j in self._jumps if j.piece is not piece]
