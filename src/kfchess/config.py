@@ -36,11 +36,14 @@ CELL_PX = 100
 # A move takes this long per cell of travel: a move of `distance` cells arrives
 # `distance * MS_PER_CELL` ms after it starts (so a 2-cell move takes 2000 ms).
 MS_PER_CELL = 1000
+# A jump keeps a piece airborne in place for this long.
+JUMP_DURATION_MS = 1000
 
 # --- Command names -----------------------------------------------------------
 CMD_PRINT_BOARD = "print board"
 CMD_CLICK = "click"  # usage: "click <x> <y>"
 CMD_WAIT = "wait"    # usage: "wait <ms>"
+CMD_JUMP = "jump"    # usage: "jump <x> <y>"
 
 # Color is encoded as a one-letter prefix on each piece token, e.g. "wK", "bR".
 WHITE_PREFIX = "w"
