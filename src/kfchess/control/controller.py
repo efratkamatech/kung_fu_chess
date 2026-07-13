@@ -58,6 +58,12 @@ class Controller:
             self._engine.request_move(self._selected, position)
             self._selected = None
 
+    def jump(self, x: int, y: int) -> None:
+        """Make the piece on the clicked cell jump in place (off-board is ignored)."""
+        position = self._pixel_to_cell(x, y)
+        if self._engine.board.in_bounds(position):
+            self._engine.request_jump(position)
+
     @staticmethod
     def _pixel_to_cell(x: int, y: int) -> Position:
         """Map pixel (x, y) to a board cell: x -> column, y -> row."""
