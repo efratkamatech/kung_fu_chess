@@ -53,6 +53,24 @@ def test_motion_position_at_handles_a_diagonal():
     assert motion.position_at(500) == (0.5, 0.5)     # quarter of the way along both axes
 
 
+def test_cell_timeline_steps_through_a_slide_with_half_open_windows():
+    motion = Motion(rook(), Position(0, 0), Position(0, 3), 0, 3000, 0)
+    assert motion.cell_timeline() == [
+        (Position(0, 0), 0, 1000),
+        (Position(0, 1), 1000, 2000),
+        (Position(0, 2), 2000, 3000),
+        (Position(0, 3), 3000, 4000),
+    ]
+
+
+def test_cell_timeline_of_a_knight_jump_has_no_cells_in_between():
+    motion = Motion(rook(), Position(0, 0), Position(2, 1), 0, 2000, 0)  # non-straight
+    assert motion.cell_timeline() == [
+        (Position(0, 0), 0, 2000),
+        (Position(2, 1), 2000, 4000),
+    ]
+
+
 def test_moving_pieces_reports_in_flight_positions():
     board = board_with_rook()
     piece = board.piece_at(Position(0, 0))
@@ -170,6 +188,43 @@ def test_capturing_a_moving_piece_cancels_its_in_flight_motion():
     arbiter.resolve(3000)  # black's motion was cancelled, so nothing reappears
     assert board.piece_at(Position(0, 3)) is white
     assert board.is_empty(Position(0, 0))
+
+
+def test_enemies_meeting_midpath_the_later_entrant_eats_and_continues():
+    # A white rook slides up column 2; a black rook slides along row 2. They meet on
+    # cell (2,2). Black enters it later, so black eats white and keeps going to (2,4).
+    board = Board(5, 5)
+    white = rook(Color.WHITE)
+    black = rook(Color.BLACK)
+    board.place(Position(4, 2), white)
+    board.place(Position(2, 0), black)
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(white, Position(4, 2), Position(0, 2), now_ms=0)    # (2,2) at 2000
+    arbiter.start_motion(black, Position(2, 0), Position(2, 4), now_ms=500)  # (2,2) at 2500
+    arbiter.resolve(3000)  # they have met on (2,2); black (later) ate white
+
+    assert board.is_empty(Position(4, 2))  # white removed from its origin, eaten mid-path
+    arbiter.resolve(4500)  # black finishes its move
+    assert board.piece_at(Position(2, 4)) is black  # the winner continued to its target
+    assert board.is_empty(Position(2, 2))  # nobody settled on the meeting cell
+
+
+def test_midpath_tie_is_won_by_the_piece_that_started_first():
+    # Both rooks enter (2,2) at the same instant. White started first, so white eats
+    # black and continues to (0,2).
+    board = Board(5, 5)
+    white = rook(Color.WHITE)
+    black = rook(Color.BLACK)
+    board.place(Position(4, 2), white)
+    board.place(Position(2, 0), black)
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(white, Position(4, 2), Position(0, 2), now_ms=0)  # started first
+    arbiter.start_motion(black, Position(2, 0), Position(2, 4), now_ms=0)  # both reach (2,2) at 2000
+    arbiter.resolve(4000)
+
+    assert board.piece_at(Position(0, 2)) is white  # white survived and reached its target
+    assert board.is_empty(Position(2, 0))  # black removed from its origin, eaten
+    assert board.is_empty(Position(2, 4))  # black never reached its target
 
 
 def test_arriving_pawn_on_its_far_row_is_promoted():

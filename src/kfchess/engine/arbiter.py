@@ -67,6 +67,45 @@ class Motion:
         col = self.source.col + (self.target.col - self.source.col) * progress
         return (row, col)
 
+    def cell_timeline(self) -> List[Tuple[Position, int, int]]:
+        """The cells this motion occupies over time, each as ``(cell, enter_ms,
+        leave_ms)`` with a half-open ``[enter_ms, leave_ms)`` window.
+
+        A straight-line slide (K/R/B/Q/P) steps through every cell from ``source`` to
+        ``target``, spending an equal time-slice in each. A jump (the knight — a
+        non-straight ``source``->``target``) passes through no cells in between: it
+        holds ``source`` until arrival, then ``target``.
+
+        Windows are half-open: a piece that *enters* a cell exactly as another
+        *leaves* it does not count as sharing it. Two enemies whose windows on a cell
+        overlap have "met" there — the basis for the mid-path capture rule.
+        """
+        d_row = self.target.row - self.source.row
+        d_col = self.target.col - self.source.col
+        distance = max(abs(d_row), abs(d_col))
+        span = self.arrival_ms - self.start_ms
+        if distance == 0:
+            return [(self.source, self.start_ms, self.arrival_ms)]
+
+        is_straight = d_row == 0 or d_col == 0 or abs(d_row) == abs(d_col)
+        if not is_straight:  # a knight-style jump: origin, then destination, no path
+            return [
+                (self.source, self.start_ms, self.arrival_ms),
+                (self.target, self.arrival_ms, self.arrival_ms + span),
+            ]
+
+        step_row = (d_row > 0) - (d_row < 0)
+        step_col = (d_col > 0) - (d_col < 0)
+        slice_ms = span // distance
+        timeline = []
+        for k in range(distance + 1):
+            cell = Position(
+                self.source.row + step_row * k, self.source.col + step_col * k
+            )
+            enter = self.start_ms + slice_ms * k
+            timeline.append((cell, enter, enter + slice_ms))
+        return timeline
+
 
 @dataclass(frozen=True)
 class MovingPiece:
@@ -160,7 +199,13 @@ class RealTimeArbiter:
         piece.state = PieceState.JUMPING
 
     def resolve(self, now_ms: int) -> None:
-        """Apply arrivals (in start order) and land jumps whose window has ended."""
+        """Resolve mid-path captures, then apply arrivals and land finished jumps.
+
+        Order matters: pieces that *met on the way* (two enemies sharing a cell at
+        overlapping times) are eaten first, while every mover still sits on its
+        origin, before any arrival relocates a piece.
+        """
+        self._resolve_path_collisions(now_ms)
         arrived = [m for m in self._motions if m.arrival_ms <= now_ms]
         arrived.sort(key=lambda m: (m.start_ms, m.sequence))
 
@@ -211,6 +256,64 @@ class RealTimeArbiter:
             for c in self._cooldowns
             if c.ready_ms > now_ms and c.piece not in captured
         ]
+
+    def _resolve_path_collisions(self, now_ms: int) -> None:
+        """Eat pieces that met mid-path: when two enemy motions share a cell during
+        overlapping windows, the one that entered *later* captures the other and keeps
+        going. The eaten piece (still on its origin) is removed and its motion dropped.
+
+        Repeats until no such collision remains at or before ``now_ms`` — one eat can
+        expose the winner to a further collision as it continues.
+        """
+        while True:
+            loser = self._earliest_path_collision(now_ms)
+            if loser is None:
+                return
+            self._board.remove(loser.source)  # it was still sitting on its origin
+            if loser.piece.piece_type.is_king:
+                self._game_over = True  # a king eaten in transit still ends the game
+            self._motions = [m for m in self._motions if m is not loser]
+
+    def _earliest_path_collision(self, now_ms: int) -> Optional[Motion]:
+        """The motion whose piece is eaten in the earliest mid-path enemy collision at
+        or before ``now_ms``, or ``None``. The winner is the later cell-entrant; on an
+        exact tie the later-started motion is the one eaten."""
+        best: Optional[tuple] = None  # (collision_ms, loser)
+        motions = self._motions
+        for i in range(len(motions)):
+            for j in range(i + 1, len(motions)):
+                a, b = motions[i], motions[j]
+                if a.piece.color == b.piece.color:
+                    continue  # same colour blocks rather than eats (rule handled later)
+                overlap = self._earliest_shared_cell(a, b, now_ms)
+                if overlap is not None and (best is None or overlap[0] < best[0]):
+                    best = overlap
+        return None if best is None else best[1]
+
+    @staticmethod
+    def _earliest_shared_cell(
+        a: Motion, b: Motion, now_ms: int
+    ) -> Optional[tuple]:
+        """The earliest shared cell where ``a`` and ``b`` overlap in time, at or before
+        ``now_ms``, as ``(overlap_start_ms, loser)`` — or ``None``. The loser is the
+        earlier entrant; on an equal entry time the later-started motion loses."""
+        best: Optional[tuple] = None
+        for cell_a, enter_a, leave_a in a.cell_timeline():
+            for cell_b, enter_b, leave_b in b.cell_timeline():
+                if cell_a != cell_b:
+                    continue
+                start = max(enter_a, enter_b)
+                if start >= min(leave_a, leave_b) or start > now_ms:
+                    continue  # windows do not overlap, or the meeting is still future
+                if enter_a > enter_b:
+                    loser = b  # a entered later -> a eats, b is eaten
+                elif enter_b > enter_a:
+                    loser = a
+                else:  # entered together: the piece that started first survives
+                    loser = a if a.start_ms > b.start_ms else b
+                if best is None or start < best[0]:
+                    best = (start, loser)
+        return best
 
     def _airborne_defender(
         self, cell: Position, arriver: Piece, arrival_ms: int
