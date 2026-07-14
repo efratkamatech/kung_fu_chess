@@ -45,7 +45,7 @@ class Controller:
         board = self._engine.board
         position = self._pixel_to_cell(x, y)
         if not board.in_bounds(position):
-            return  # clicks outside the board are ignored
+            return
 
         target_piece = board.piece_at(position)
 

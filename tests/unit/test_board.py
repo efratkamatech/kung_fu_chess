@@ -41,9 +41,9 @@ def test_place_and_query():
 
 def test_off_board_access_raises():
     board = Board(2, 2)
-    with pytest.raises(ValueError):
+    with pytest.raises(IndexError):
         board.piece_at(Position(5, 5))
-    with pytest.raises(ValueError):
+    with pytest.raises(IndexError):
         board.place(Position(5, 5), make_piece())
 
 
@@ -79,5 +79,5 @@ def test_remove_empty_cell_returns_none():
 
 
 def test_remove_off_board_raises():
-    with pytest.raises(ValueError):
+    with pytest.raises(IndexError):
         Board(2, 2).remove(Position(5, 5))

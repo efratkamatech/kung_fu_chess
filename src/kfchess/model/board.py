@@ -50,7 +50,7 @@ class Board:
     def piece_at(self, position: Position) -> Optional[Piece]:
         """The piece at ``position``, or ``None`` if the cell is empty.
 
-        Raises ``ValueError`` if ``position`` is off the board — callers that may
+        Raises ``IndexError`` if ``position`` is off the board — callers that may
         reference off-board cells (e.g. click handling) check ``in_bounds`` first.
         """
         self._require_in_bounds(position)
@@ -99,4 +99,4 @@ class Board:
     # --- internal helpers ----------------------------------------------------
     def _require_in_bounds(self, position: Position) -> None:
         if not self.in_bounds(position):
-            raise ValueError(f"position out of bounds: {position!r}")
+            raise IndexError(f"position out of bounds: {position!r}")

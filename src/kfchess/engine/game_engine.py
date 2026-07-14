@@ -49,7 +49,7 @@ class GameEngine:
         not appear at the destination until enough time has passed.
         """
         if self._arbiter.is_game_over:
-            return  # the game has ended; ignore further moves
+            return
         if not self._rule_engine.is_legal_move(self._board, source, target):
             return
         piece = self._board.piece_at(source)
