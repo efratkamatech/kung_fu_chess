@@ -1,4 +1,4 @@
-from kfchess.config import JUMP_DURATION_MS, MS_PER_CELL
+from kfchess.config import COOLDOWN_MS, JUMP_DURATION_MS, MS_PER_CELL
 from kfchess.control.controller import Controller
 from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
@@ -25,7 +25,7 @@ def setup(board):
         board,
         Clock(),
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS),
+        RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS, COOLDOWN_MS),
     )
     return board, Controller(engine), engine
 
@@ -84,6 +84,54 @@ def test_move_onto_enemy_relocates_over_it():
     engine.wait(BIG_WAIT)
     assert board.is_empty(Position(0, 0))
     assert board.piece_at(Position(0, 1)) is white
+
+
+def test_selection_is_dropped_when_its_piece_is_captured_under_it():
+    # Real-time: after selecting a piece, an enemy captures it and stands on its
+    # cell before the second click. That second click must NOT move the enemy piece
+    # that now sits there — it should be read as a fresh selection of the clicked
+    # friendly piece instead.
+    board, controller, engine = setup(Board(1, 4))
+    white = piece(Color.WHITE, "K")   # selected, then captured
+    other = piece(Color.WHITE, "R")   # clicked after the capture
+    enemy = piece(Color.BLACK, "R")   # captures `white`, then stands on its cell
+    board.place(Position(0, 1), white)
+    board.place(Position(0, 3), other)
+    board.place(Position(0, 0), enemy)
+
+    controller.click(150, 50)                          # select white at (0,1)
+    engine.request_move(Position(0, 0), Position(0, 1))  # enemy moves to capture it
+    engine.wait(BIG_WAIT)                              # capture completes; enemy on (0,1)
+
+    controller.click(350, 50)   # click `other` at (0,3) -> fresh selection (not a move)
+    controller.click(250, 50)   # empty (0,2) -> the *newly selected* `other` moves there
+    engine.wait(BIG_WAIT)
+
+    assert board.piece_at(Position(0, 1)) is enemy   # enemy was never moved
+    assert board.piece_at(Position(0, 2)) is other   # `other` moved as the live selection
+    assert board.is_empty(Position(0, 3))            # `other` left its origin
+
+
+def test_selection_is_dropped_when_its_cell_becomes_empty():
+    # If the selected piece leaves its cell (finishes an in-flight move) the cell is
+    # empty on the next click. The click must be read fresh, not crash on a missing
+    # selected piece.
+    board, controller, engine = setup(Board(1, 3))
+    white = piece(Color.WHITE, "K")   # selected, then vacates its cell
+    other = piece(Color.WHITE, "R")   # clicked after the cell is empty
+    board.place(Position(0, 1), white)
+
+    controller.click(150, 50)                          # select white at (0,1)
+    engine.request_move(Position(0, 1), Position(0, 2))  # it moves off (0,1)
+    engine.wait(BIG_WAIT)                              # (0,1) is now empty
+    board.place(Position(0, 0), other)
+
+    controller.click(50, 50)    # click `other` at (0,0) -> fresh selection (no crash)
+    controller.click(150, 50)   # empty (0,1) -> the newly selected `other` moves there
+    engine.wait(BIG_WAIT)
+
+    assert board.piece_at(Position(0, 1)) is other   # `other` was the live selection
+    assert board.is_empty(Position(0, 0))            # `other` left its origin
 
 
 def test_jump_makes_the_clicked_piece_jump():
