@@ -174,20 +174,23 @@ def test_two_enemies_crossing_the_one_that_started_first_wins():
     assert board.is_empty(Position(0, 2))
 
 
-def test_capturing_a_moving_piece_cancels_its_in_flight_motion():
+def test_head_on_enemies_earlier_start_wins_and_cancels_the_other_motion():
+    # Two enemies move head-on into each other's cell. They cross *between* cells, so
+    # the meeting is simultaneous — the earlier start (black) wins, eats the later
+    # mover (white), and continues; white's in-flight motion is cancelled.
     board = Board(1, 4)
     white = rook(Color.WHITE)
     black = rook(Color.BLACK)
     board.place(Position(0, 2), white)
     board.place(Position(0, 3), black)
     arbiter = make_arbiter(board)
-    arbiter.start_motion(black, Position(0, 3), Position(0, 0), now_ms=0)  # arrives 3000
-    arbiter.start_motion(white, Position(0, 2), Position(0, 3), now_ms=0)  # arrives 1000
-    arbiter.resolve(1000)  # white reaches black's cell first and captures it
-    assert board.piece_at(Position(0, 3)) is white
-    arbiter.resolve(3000)  # black's motion was cancelled, so nothing reappears
-    assert board.piece_at(Position(0, 3)) is white
-    assert board.is_empty(Position(0, 0))
+    arbiter.start_motion(black, Position(0, 3), Position(0, 0), now_ms=0)  # started first
+    arbiter.start_motion(white, Position(0, 2), Position(0, 3), now_ms=0)  # started second
+    arbiter.resolve(1000)
+    assert board.is_empty(Position(0, 2))  # white eaten mid-flight, its motion cancelled
+    arbiter.resolve(3000)
+    assert board.piece_at(Position(0, 0)) is black  # black won and reached its target
+    assert board.is_empty(Position(0, 3))
 
 
 def test_enemies_meeting_midpath_the_later_entrant_eats_and_continues():

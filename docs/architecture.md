@@ -14,7 +14,7 @@ without rewriting the core.
 | Movement rules | Movement geometry per piece type, built from composable primitives (slide-until-blocked, jump-to-offset, move-N-in-direction, on-reach-rank-effect) so new pieces/effects are registered, not coded | Game commands, timing, animation, rendering, input |
 | RuleEngine | Read-only legality validation for a requested move/action | Board mutation, animation, click interpretation, game-over state |
 | GameEngine | Game-over guard, validation delegation, starting legal motions, wait delegation, snapshots | Piece-specific logic, rendering, input parsing, network/identity concerns |
-| RealTimeArbiter | Active motions, simulated time, arrival resolution, captures, promotion effect, jump-vs-attacker timing race, king-capture reporting | Chess legality, clicks, rendering |
+| RealTimeArbiter | Active motions, simulated time, arrival resolution, mid-path meetings (later entrant eats an enemy and continues, or is blocked one cell short by a friend; ties to the earlier start), captures, promotion effect, jump-vs-attacker timing race, king-capture reporting | Chess legality, clicks, rendering |
 | Session Actor | One command queue/task per game — single-writer into GameEngine/RealTimeArbiter; drives the cooldown/tick scheduler; timestamps events on arrival | Chess legality, rendering, wire format, persistence format |
 | Role & Access | Identity → role (player/spectator/referee/...) → permission, via Role registry | Board mutation, movement legality, rendering |
 | Session/Match Manager | Create/destroy Session Actors, matchmaking, role assignment, reconnection-token mapping | Movement rules, rendering, wire protocol details |
@@ -53,3 +53,12 @@ without rewriting the core.
 ## Open (decide later)
 - Wire format (JSON vs binary), Session Actor concurrency primitive
   (asyncio vs other), snapshot/event-log frequency, multi-process scaling.
+- **Unify the collision passes**: the RealTimeArbiter resolves collisions in two
+  passes. A mid-path pass over motion timelines handles every moving-vs-moving
+  meeting (a shared cell, or a head-on swap between cells); the arrival pass then
+  only captures a *settled* piece sitting on a destination. One known gap falls
+  between them — a piece that *settles onto* an already-moving piece's path is caught
+  by neither. Folding both into a single time-window model would close it, but needs
+  settled pieces modelled in the timeline (or moving pieces taken off the board grid,
+  which the origin-based rendering and click-selection currently depend on).
+  Deferred as its own refactor.

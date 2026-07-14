@@ -19,9 +19,15 @@ move until the cooldown elapses (the RuleEngine rejects a COOLDOWN piece the sam
 way it rejects a MOVING one). ``resolve`` frees cooled pieces back to IDLE as time
 passes. A ``cooldown_ms`` of 0 frees the piece in the same pass — i.e. no cooldown.
 
-Collisions: because a moving piece stays at its origin until it arrives, two enemies
-crossing toward each other's squares are resolved by resolving arrivals in start
-order and cancelling a captured piece's motion — the one that started first wins.
+Collisions: two moving pieces "meet" either on the same cell at overlapping times or
+by swapping head-on into each other's cell (crossing between cells). Each motion's
+``cell_timeline`` gives its per-cell windows. On a shared cell the piece that arrives
+*later* is the active one: it captures an enemy already there and continues, or — if
+that piece is a friend — cannot enter and stops one cell short. A head-on swap
+crosses between cells and so is always simultaneous; like any exact tie it is settled
+in favour of the piece that started first. This mid-path pass runs first, while every
+mover still sits on its origin; only capturing a *settled* piece on a destination is
+left to the arrival step.
 
 The arbiter knows the board, positions, and time, but not chess legality (judged by
 the RuleEngine before an action starts), pixels, or the text format.
@@ -274,7 +280,7 @@ class RealTimeArbiter:
             _at, kind, motion, cell = event
             if kind == "eat":
                 self._eat(motion)
-            else:  # "block"
+            else:  
                 self._block(motion, cell, _at)
 
     def _earliest_collision(self, now_ms: int) -> Optional[tuple]:
@@ -291,36 +297,55 @@ class RealTimeArbiter:
 
     @staticmethod
     def _collision_event(a: Motion, b: Motion, now_ms: int) -> Optional[tuple]:
-        """The earliest cell where ``a`` and ``b`` overlap in time, at or before
-        ``now_ms``, as ``(at_ms, kind, motion, cell)`` — or ``None``.
+        """The earliest meeting of ``a`` and ``b`` at or before ``now_ms``, as
+        ``(at_ms, kind, motion, cell)`` — or ``None``.
 
-        ``kind`` is ``"eat"`` (``motion`` is the piece captured) or ``"block"``
-        (``motion`` is the piece that stops just before ``cell``). The later entrant
-        is the active one; on an equal entry time the piece that *started* first
-        prevails, so the other is the one captured or stopped.
+        Two motions meet either on a *shared cell* (overlapping windows) or in a
+        head-on *swap* into each other's cell (crossing between cells). ``kind`` is
+        ``"eat"`` (``motion`` is the piece captured) or ``"block"`` (``motion`` stops
+        just before ``cell``). On a shared cell the later entrant is the active one;
+        an equal entry time, and every swap (a between-cells crossing is always
+        simultaneous), go to the piece that *started* first, so the other yields.
         """
         same_colour = a.piece.color == b.piece.color
+        timeline_a = a.cell_timeline()
+        timeline_b = b.cell_timeline()
+        started_second = a if a.start_ms > b.start_ms else b  # yields on any tie/swap
         best: Optional[tuple] = None
-        for cell_a, enter_a, leave_a in a.cell_timeline():
-            for cell_b, enter_b, leave_b in b.cell_timeline():
-                if cell_a != cell_b:
-                    continue
+        for i, (cell_a, enter_a, leave_a) in enumerate(timeline_a):
+            for j, (cell_b, enter_b, leave_b) in enumerate(timeline_b):
                 start = max(enter_a, enter_b)
                 if start >= min(leave_a, leave_b) or start > now_ms:
                     continue  # windows do not overlap, or the meeting is still future
-                if enter_a == enter_b:  # tie: the piece that started first prevails
-                    prevailer, yielder = (
-                        (a, b) if a.start_ms <= b.start_ms else (b, a)
-                    )
-                    motion = yielder  # yielder is stopped (friend) or eaten (enemy)
+                if cell_a == cell_b:
+                    if enter_a == enter_b:
+                        motion, cell = started_second, cell_a
+                    elif same_colour:  # later entrant cannot enter; it stops short
+                        motion, cell = (a if enter_a > enter_b else b), cell_a
+                    else:  # later entrant eats the piece already there
+                        motion, cell = (b if enter_a > enter_b else a), cell_a
+                elif (
+                    RealTimeArbiter._are_adjacent(cell_a, cell_b)
+                    and i + 1 < len(timeline_a)
+                    and timeline_a[i + 1][0] == cell_b
+                    and j + 1 < len(timeline_b)
+                    and timeline_b[j + 1][0] == cell_a
+                ):
+                    # head-on swap: each is moving into the other's cell. The yielder
+                    # stops just before the cell it was entering (the other's cell).
+                    motion = started_second
+                    cell = cell_b if motion is a else cell_a
                 else:
-                    later = a if enter_a > enter_b else b
-                    earlier = b if later is a else a
-                    motion = later if same_colour else earlier
+                    continue
                 kind = "block" if same_colour else "eat"
                 if best is None or start < best[0]:
-                    best = (start, kind, motion, cell_a)
+                    best = (start, kind, motion, cell)
         return best
+
+    @staticmethod
+    def _are_adjacent(x: Position, y: Position) -> bool:
+        """True if ``x`` and ``y`` are one step apart (including diagonally)."""
+        return max(abs(x.row - y.row), abs(x.col - y.col)) == 1
 
     def _eat(self, eaten: Motion) -> None:
         """Remove an eaten piece (still on its origin) and drop its motion."""
