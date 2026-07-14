@@ -53,12 +53,13 @@ without rewriting the core.
 ## Open (decide later)
 - Wire format (JSON vs binary), Session Actor concurrency primitive
   (asyncio vs other), snapshot/event-log frequency, multi-process scaling.
-- **Unify the collision passes**: the RealTimeArbiter resolves collisions in two
-  passes. A mid-path pass over motion timelines handles every moving-vs-moving
-  meeting (a shared cell, or a head-on swap between cells); the arrival pass then
-  only captures a *settled* piece sitting on a destination. One known gap falls
-  between them — a piece that *settles onto* an already-moving piece's path is caught
-  by neither. Folding both into a single time-window model would close it, but needs
-  settled pieces modelled in the timeline (or moving pieces taken off the board grid,
-  which the origin-based rendering and click-selection currently depend on).
-  Deferred as its own refactor.
+- **Unify the collision passes**: the RealTimeArbiter resolves collisions in a
+  mid-path pass (moving-vs-moving on a shared cell or a head-on swap, plus
+  moving-vs-*settled* along a mover's path, using a per-cell settle time) and an
+  arrival pass (landing, promotion, and capturing a settled piece on a destination).
+  The mid-path settled check has one granularity limitation: if a piece settles onto
+  a mover's path and the mover then passes it **within the same `resolve` call**, the
+  settle is recorded only after that call's mid-path pass, so it is missed until the
+  next `resolve`. In the real command path `resolve` runs once per `wait`, so this
+  only bites a single coarse wait that spans both events. Closing it fully (or the
+  cleaner single time-window model) is deferred as its own refactor.

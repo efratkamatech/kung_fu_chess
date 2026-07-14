@@ -270,6 +270,60 @@ def test_same_colour_reaching_a_taken_destination_stops_one_cell_short():
     assert board.is_empty(Position(2, 0))            # second left its origin
 
 
+def test_mover_eats_an_enemy_that_settled_onto_its_path_and_continues():
+    # A black rook settles on (0,2) at time 1000. A white rook that started sliding
+    # along the row reaches (0,2) later, eats it in passing, and continues to (0,4).
+    board = Board(1, 5)
+    white = rook(Color.WHITE)
+    black = rook(Color.BLACK)
+    board.place(Position(0, 0), white)
+    board.place(Position(0, 3), black)
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(white, Position(0, 0), Position(0, 4), now_ms=0)  # reaches (0,2) at 2000
+    arbiter.start_motion(black, Position(0, 3), Position(0, 2), now_ms=0)  # settles (0,2) at 1000
+    arbiter.resolve(1000)  # black has settled on (0,2), before white gets there
+    assert board.piece_at(Position(0, 2)) is black
+
+    arbiter.resolve(4000)  # white slides through and eats black in passing
+    assert board.piece_at(Position(0, 4)) is white  # white reached its target
+    assert board.is_empty(Position(0, 2))            # black was eaten in passing
+
+
+def test_mover_stops_before_a_friend_that_settled_onto_its_path():
+    # Same shape but the piece that settled on (0,2) is a friend, so the slider stops
+    # one cell short at (0,1) instead of passing through or capturing.
+    board = Board(1, 5)
+    first = rook(Color.WHITE)
+    second = rook(Color.WHITE)
+    board.place(Position(0, 3), first)
+    board.place(Position(0, 0), second)
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(first, Position(0, 3), Position(0, 2), now_ms=0)   # settles (0,2) at 1000
+    arbiter.start_motion(second, Position(0, 0), Position(0, 4), now_ms=0)  # reaches (0,2) at 2000
+    arbiter.resolve(1000)  # the friend settles on (0,2) first
+    arbiter.resolve(4000)  # the slider is stopped before it
+    assert board.piece_at(Position(0, 2)) is first   # friend still there, uncaptured
+    assert board.piece_at(Position(0, 1)) is second  # slider stopped one cell short
+
+
+def test_no_collision_if_the_piece_settles_after_the_mover_has_passed():
+    # White passes (0,2) during [2000,3000); black only settles there at 3000, after
+    # white has left it. They never shared the cell at the same moment -> no capture.
+    board = Board(2, 5)
+    white = rook(Color.WHITE)
+    black = rook(Color.BLACK)
+    board.place(Position(0, 0), white)
+    board.place(Position(1, 2), black)
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(white, Position(0, 0), Position(0, 4), now_ms=0)     # passes (0,2) at 2000
+    arbiter.start_motion(black, Position(1, 2), Position(0, 2), now_ms=2000)  # settles (0,2) at 3000
+    arbiter.resolve(3000)  # black settles on (0,2), after white has passed it
+    assert board.piece_at(Position(0, 2)) is black
+    arbiter.resolve(4000)  # white finishes untouched — it passed before black arrived
+    assert board.piece_at(Position(0, 4)) is white
+    assert board.piece_at(Position(0, 2)) is black
+
+
 def test_arriving_pawn_on_its_far_row_is_promoted():
     board = Board(2, 3)
     pawn = Piece(PieceType("P", "pawn", is_pawn=True), Color.WHITE)

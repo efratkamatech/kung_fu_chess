@@ -36,7 +36,7 @@ the RuleEngine before an action starts), pixels, or the text format.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
@@ -164,6 +164,7 @@ class RealTimeArbiter:
         self._motions: List[Motion] = []
         self._jumps: List[Jump] = []
         self._cooldowns: List[Cooldown] = []
+        self._settle_ms: Dict[Position, int] = {}  # when the piece on a cell settled
         self._next_sequence = 0
         self._game_over = False
 
@@ -197,6 +198,7 @@ class RealTimeArbiter:
             Motion(piece, source, target, now_ms, arrival_ms, self._next_sequence)
         )
         self._next_sequence += 1
+        self._settle_ms.pop(source, None)  # it is no longer settled on its origin
         piece.state = PieceState.MOVING
 
     def start_jump(self, piece: Piece, cell: Position, now_ms: int) -> None:
@@ -237,6 +239,7 @@ class RealTimeArbiter:
                 # on your own, so stop one cell short instead of capturing it.
                 stop_cell = self._cell_before(motion, motion.target)
                 self._board.place(stop_cell, motion.piece)
+                self._settle_ms[stop_cell] = now_ms
                 self._begin_cooldown(motion.piece, now_ms)
                 continue
             if occupant is not None:
@@ -244,6 +247,7 @@ class RealTimeArbiter:
                 if occupant.piece_type.is_king:
                     self._game_over = True  # capturing a king ends the game
             self._board.place(motion.target, motion.piece)
+            self._settle_ms[motion.target] = now_ms
             self._begin_cooldown(motion.piece, now_ms)
             self._promotion.apply(motion.piece, motion.target, self._board)
 
@@ -286,8 +290,10 @@ class RealTimeArbiter:
                 return
             _at, kind, motion, cell = event
             if kind == "eat":
-                self._eat(motion)
-            else:  
+                self._eat(motion)  # two movers meet: the later one eats the earlier
+            elif kind == "eat_settled":
+                self._eat_settled(cell)  # a mover captures a settled piece and continues
+            else:  # "block": the later mover stops one cell short of a friend
                 self._block(motion, cell, _at)
 
     def _earliest_collision(self, now_ms: int) -> Optional[tuple]:
@@ -300,6 +306,10 @@ class RealTimeArbiter:
                 event = self._collision_event(motions[i], motions[j], now_ms)
                 if event is not None and (best is None or event[0] < best[0]):
                     best = event
+        for motion in motions:
+            event = self._settled_collision_event(motion, now_ms)
+            if event is not None and (best is None or event[0] < best[0]):
+                best = event
         return best
 
     @staticmethod
@@ -354,6 +364,46 @@ class RealTimeArbiter:
         """True if ``x`` and ``y`` are one step apart (including diagonally)."""
         return max(abs(x.row - y.row), abs(x.col - y.col)) == 1
 
+    def _settled_collision_event(
+        self, a: Motion, now_ms: int
+    ) -> Optional[tuple]:
+        """The earliest *transit* cell where ``a`` runs into a piece that had already
+        settled on its path, at or before ``now_ms`` — as ``(at_ms, kind, motion,
+        cell)`` or ``None``.
+
+        ``kind`` is ``"eat_settled"`` (``a`` is the later arriver, captures the
+        settled enemy and keeps going) or ``"block"`` (``a`` stops one cell short of a
+        settled friend). The destination itself is left to the arrival step, so only
+        the cells *before* the target are considered. The settled piece must have
+        arrived *before* ``a`` reached the cell, else ``a`` passed first and they
+        never shared it.
+        """
+        for cell, enter, _leave in a.cell_timeline()[:-1]:  # transit cells only
+            if enter > now_ms:
+                break  # a has not reached this cell yet (later cells are later still)
+            settled_ms = self._settle_ms.get(cell)
+            if settled_ms is None or settled_ms > enter:
+                continue  # nothing settled here, or it settled after a passed through
+            occupant = self._board.piece_at(cell)
+            if occupant is None or occupant is a.piece:
+                continue
+            if occupant.state in (PieceState.MOVING, PieceState.JUMPING):
+                continue  # only a truly settled piece blocks/is eaten mid-path
+            if occupant.color == a.piece.color:
+                return (enter, "block", a, cell)
+            return (enter, "eat_settled", a, cell)
+        return None
+
+    def _eat_settled(self, cell: Position) -> None:
+        """Capture the settled piece on ``cell`` in passing; the mover keeps its
+        motion and continues. Clears the victim's cooldown and settle record."""
+        victim = self._board.remove(cell)
+        self._settle_ms.pop(cell, None)
+        if victim is not None:
+            self._cooldowns = [c for c in self._cooldowns if c.piece is not victim]
+            if victim.piece_type.is_king:
+                self._game_over = True  # a king taken in passing still ends the game
+
     def _eat(self, eaten: Motion) -> None:
         """Remove an eaten piece (still on its origin) and drop its motion."""
         self._board.remove(eaten.source)
@@ -367,6 +417,7 @@ class RealTimeArbiter:
         stop_cell = self._cell_before(blocked, cell)
         self._board.remove(blocked.source)
         self._board.place(stop_cell, blocked.piece)
+        self._settle_ms[stop_cell] = at_ms
         self._begin_cooldown(blocked.piece, at_ms)
         self._motions = [m for m in self._motions if m is not blocked]
 
