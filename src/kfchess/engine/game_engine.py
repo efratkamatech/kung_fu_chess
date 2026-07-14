@@ -12,7 +12,9 @@ clicks, or the text format (those belong to the Controller and Text I/O layers).
 
 from __future__ import annotations
 
-from kfchess.engine.arbiter import RealTimeArbiter
+from typing import List
+
+from kfchess.engine.arbiter import MovingPiece, RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.model.board import Board
 from kfchess.model.piece import PieceState
@@ -41,6 +43,14 @@ class GameEngine:
     def board(self) -> Board:
         """The current board state (read it to render or interpret clicks)."""
         return self._board
+
+    def moving_pieces(self) -> List[MovingPiece]:
+        """Where each in-flight piece is *right now* (at the current clock time).
+
+        A rendering aid: the board still shows a moving piece at its origin, while
+        this reports its interpolated position between origin and destination.
+        """
+        return self._arbiter.moving_pieces(self._clock.now_ms)
 
     def request_move(self, source: Position, target: Position) -> None:
         """Start moving the piece at ``source`` to ``target`` if the move is legal.

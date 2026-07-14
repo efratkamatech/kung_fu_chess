@@ -1,4 +1,4 @@
-from kfchess.engine.arbiter import Motion, RealTimeArbiter
+from kfchess.engine.arbiter import Motion, MovingPiece, RealTimeArbiter
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece, PieceState
@@ -36,6 +36,37 @@ def test_motion_records_its_fields():
     assert motion.start_ms == 0
     assert motion.arrival_ms == 2000
     assert motion.sequence == 0
+
+
+def test_motion_position_at_interpolates_and_clamps():
+    # A 2-cell move from (0,0) to (0,2) over [0, 2000].
+    motion = Motion(rook(), Position(0, 0), Position(0, 2), 0, 2000, 0)
+    assert motion.position_at(0) == (0.0, 0.0)       # at the start -> source
+    assert motion.position_at(1000) == (0.0, 1.0)    # halfway -> between the cells
+    assert motion.position_at(2000) == (0.0, 2.0)    # at arrival -> target
+    assert motion.position_at(-500) == (0.0, 0.0)    # before start -> clamped to source
+    assert motion.position_at(9999) == (0.0, 2.0)    # past arrival -> clamped to target
+
+
+def test_motion_position_at_handles_a_diagonal():
+    motion = Motion(rook(), Position(0, 0), Position(2, 2), 0, 2000, 0)
+    assert motion.position_at(500) == (0.5, 0.5)     # quarter of the way along both axes
+
+
+def test_moving_pieces_reports_in_flight_positions():
+    board = board_with_rook()
+    piece = board.piece_at(Position(0, 0))
+    arbiter = make_arbiter(board)
+    assert arbiter.moving_pieces(0) == []            # nothing in flight yet
+    arbiter.start_motion(piece, Position(0, 0), Position(0, 2), now_ms=0)
+
+    snapshot = arbiter.moving_pieces(1000)           # halfway there
+    assert snapshot == [
+        MovingPiece(piece, (0.0, 1.0), Position(0, 0), Position(0, 2))
+    ]
+
+    arbiter.resolve(2000)                            # it arrives and leaves flight
+    assert arbiter.moving_pieces(2000) == []
 
 
 def test_start_motion_keeps_piece_at_origin_and_marks_it_moving():

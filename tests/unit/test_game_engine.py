@@ -55,6 +55,23 @@ def test_legal_move_completes_after_enough_time():
     assert board.piece_at(Position(0, 2)).piece_type.letter == "R"
 
 
+def test_moving_pieces_uses_the_current_clock_time():
+    board = rook_board()
+    engine = make_engine(board)
+    assert engine.moving_pieces() == []                  # nothing moving at rest
+    engine.request_move(Position(0, 0), Position(0, 2))  # 2 cells, arrives at 2000
+    engine.wait(1000)                                    # clock now at 1000 -> halfway
+
+    snapshot = engine.moving_pieces()
+    assert len(snapshot) == 1
+    assert snapshot[0].position == (0.0, 1.0)            # interpolated at the clock time
+    assert snapshot[0].source == Position(0, 0)
+    assert snapshot[0].target == Position(0, 2)
+
+    engine.wait(1000)                                    # clock at 2000 -> arrived, out of flight
+    assert engine.moving_pieces() == []
+
+
 def test_moving_piece_is_marked_moving_then_cooldown_then_idle():
     board = rook_board()
     engine = make_engine(board)

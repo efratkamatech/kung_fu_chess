@@ -30,7 +30,7 @@ the RuleEngine before an action starts), pixels, or the text format.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
@@ -48,6 +48,39 @@ class Motion:
     start_ms: int
     arrival_ms: int
     sequence: int  # order the motion was started (tie-breaker for "started first")
+
+    def position_at(self, now_ms: int) -> Tuple[float, float]:
+        """This piece's *fractional* (row, col) at ``now_ms`` along its straight-line
+        path from ``source`` to ``target``.
+
+        Clamped to the endpoints: before the motion starts it reads as ``source``,
+        and once it has arrived (or later) as ``target``. Progress is taken from the
+        motion's own ``start_ms``/``arrival_ms`` span, so the speed matches whatever
+        the arbiter assigned when the motion began. Read-only: it computes, never
+        mutates.
+        """
+        span = self.arrival_ms - self.start_ms
+        if span <= 0:
+            return (float(self.target.row), float(self.target.col))
+        progress = min(1.0, max(0.0, (now_ms - self.start_ms) / span))
+        row = self.source.row + (self.target.row - self.source.row) * progress
+        col = self.source.col + (self.target.col - self.source.col) * progress
+        return (row, col)
+
+
+@dataclass(frozen=True)
+class MovingPiece:
+    """A read-only view of one in-flight piece: where it is now and its endpoints.
+
+    Produced by ``RealTimeArbiter.moving_pieces`` for callers that render motion.
+    ``position`` is a *fractional* cell — e.g. (3.5, 4.0) is halfway between two
+    cells — not a board cell. It carries no way to mutate the underlying motion.
+    """
+
+    piece: Piece
+    position: Tuple[float, float]
+    source: Position
+    target: Position
 
 
 @dataclass(frozen=True)
@@ -93,6 +126,19 @@ class RealTimeArbiter:
     def is_game_over(self) -> bool:
         """True once a king has been captured (the game has ended)."""
         return self._game_over
+
+    def moving_pieces(self, now_ms: int) -> List[MovingPiece]:
+        """A snapshot of every in-flight piece and its interpolated position at
+        ``now_ms`` — a read-only overlay for rendering.
+
+        Derived purely from the active motions; it never touches the board. A moving
+        piece still sits on its *origin* cell on the board until it arrives, so this
+        is where the piece visually *is* mid-flight, not where the board records it.
+        """
+        return [
+            MovingPiece(m.piece, m.position_at(now_ms), m.source, m.target)
+            for m in self._motions
+        ]
 
     def start_motion(
         self, piece: Piece, source: Position, target: Position, now_ms: int
