@@ -12,6 +12,7 @@ from kfchess.rules.rule_engine import RuleEngine
 
 MS_PER_CELL = 1000
 JUMP_DURATION_MS = 1000
+COOLDOWN_MS = 1000
 PROMOTION = Promotion(PAWN_FORWARD, PieceType("Q", "queen"))
 
 
@@ -21,7 +22,7 @@ def make_engine(board, clock=None):
         board,
         clock,
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS),
+        RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS, COOLDOWN_MS),
     )
 
 
@@ -54,13 +55,15 @@ def test_legal_move_completes_after_enough_time():
     assert board.piece_at(Position(0, 2)).piece_type.letter == "R"
 
 
-def test_moving_piece_is_marked_moving_then_idle():
+def test_moving_piece_is_marked_moving_then_cooldown_then_idle():
     board = rook_board()
     engine = make_engine(board)
     piece = board.piece_at(Position(0, 0))
     engine.request_move(Position(0, 0), Position(0, 2))
     assert piece.state is PieceState.MOVING
-    engine.wait(2000)
+    engine.wait(2000)                       # arrives -> on cooldown, not yet free
+    assert piece.state is PieceState.COOLDOWN
+    engine.wait(1000)                       # cooldown elapses
     assert piece.state is PieceState.IDLE
 
 
@@ -90,15 +93,19 @@ def test_moving_piece_cannot_be_redirected():
     assert board.is_empty(Position(0, 1))
 
 
-def test_no_cooldown_move_again_immediately_after_arrival():
+def test_cooldown_blocks_an_immediate_second_move_but_allows_a_later_one():
     board = rook_board()
     engine = make_engine(board)
     engine.request_move(Position(0, 0), Position(0, 1))  # arrives 1000
-    engine.wait(1000)
-    engine.request_move(Position(0, 1), Position(0, 2))  # move again right away
+    engine.wait(1000)                                    # lands -> on cooldown until 2000
+    engine.request_move(Position(0, 1), Position(0, 2))  # too soon -> rejected
+    engine.wait(500)                                     # now 1500, still cooling
+    assert board.piece_at(Position(0, 1)).piece_type.letter == "R"  # did not move
+    assert board.is_empty(Position(0, 2))
+    engine.wait(500)                                     # now 2000, cooldown elapsed
+    engine.request_move(Position(0, 1), Position(0, 2))  # now allowed, arrives 3000
     engine.wait(1000)
     assert board.piece_at(Position(0, 2)).piece_type.letter == "R"
-    assert board.is_empty(Position(0, 0))
     assert board.is_empty(Position(0, 1))
 
 

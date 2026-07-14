@@ -7,7 +7,8 @@ movement rules are injected, so the set of pieces/geometry is configurable.
 It checks shape legality (the piece's geometry reaches the target, with the path
 clear — the path check lives in SlideMovement), the capture rule (you cannot land
 on your own color; an enemy at the destination is a legal capture), and that the
-piece is not already in flight (a moving piece cannot be redirected).
+piece is free to act — neither in flight (a moving piece cannot be redirected) nor
+on cooldown from a recent landing.
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ class RuleEngine:
         if piece is None:
             return False  # nothing to move
 
-        if piece.state is PieceState.MOVING:
-            return False  # a piece already in flight cannot be redirected
+        if piece.state in (PieceState.MOVING, PieceState.COOLDOWN):
+            return False  # in flight (can't redirect) or cooling down after a landing
 
         letter = piece.piece_type.letter
         if letter not in self._movement_rules:

@@ -38,6 +38,9 @@ CELL_PX = 100
 MS_PER_CELL = 1000
 # A jump keeps a piece airborne in place for this long.
 JUMP_DURATION_MS = 1000
+# After a piece lands from a move it is on cooldown for this long: it cannot start
+# a new move until the cooldown elapses. Set to 0 to disable cooldown entirely.
+COOLDOWN_MS = 1000
 
 # --- Command names -----------------------------------------------------------
 CMD_PRINT_BOARD = "print board"

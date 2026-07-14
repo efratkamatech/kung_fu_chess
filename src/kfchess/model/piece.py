@@ -23,14 +23,16 @@ from kfchess.model.piece_type import PieceType
 class PieceState(Enum):
     """A piece's lifecycle state.
 
-    ``IDLE`` = settled; ``MOVING`` = in flight between two cells (Iteration 6);
-    ``JUMPING`` = airborne in place (Iteration 11). ``CAPTURED`` would join if/when
-    captures need to track it.
+    ``IDLE`` = settled and free to act; ``MOVING`` = in flight between two cells
+    (Iteration 6); ``JUMPING`` = airborne in place (Iteration 11); ``COOLDOWN`` =
+    just landed from a move and briefly unable to start another. ``CAPTURED`` would
+    join if/when captures need to track it.
     """
 
     IDLE = auto()
     MOVING = auto()
     JUMPING = auto()
+    COOLDOWN = auto()
 
 
 class Piece:

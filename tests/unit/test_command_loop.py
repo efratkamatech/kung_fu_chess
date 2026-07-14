@@ -4,7 +4,7 @@ from kfchess.config import (
     ERR_UNKNOWN_COMMAND,
     error_message,
 )
-from kfchess.config import JUMP_DURATION_MS, MS_PER_CELL
+from kfchess.config import COOLDOWN_MS, JUMP_DURATION_MS, MS_PER_CELL
 from kfchess.control.controller import Controller
 from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
@@ -23,7 +23,7 @@ def _build_game(board):
         board,
         Clock(),
         RuleEngine(standard_movement_rules()),
-        RealTimeArbiter(board, MS_PER_CELL, promotion, JUMP_DURATION_MS),
+        RealTimeArbiter(board, MS_PER_CELL, promotion, JUMP_DURATION_MS, COOLDOWN_MS),
     )
     return engine, Controller(engine)
 

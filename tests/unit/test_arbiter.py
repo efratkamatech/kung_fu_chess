@@ -9,11 +9,14 @@ from kfchess.rules.promotion import Promotion
 
 MS_PER_CELL = 1000
 JUMP_DURATION_MS = 1000
+COOLDOWN_MS = 1000
 PROMOTION = Promotion(PAWN_FORWARD, PieceType("Q", "queen"))
 
 
-def make_arbiter(board):
-    return RealTimeArbiter(board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS)
+def make_arbiter(board, cooldown_ms=COOLDOWN_MS):
+    return RealTimeArbiter(
+        board, MS_PER_CELL, PROMOTION, JUMP_DURATION_MS, cooldown_ms
+    )
 
 
 def rook(color=Color.WHITE):
@@ -56,7 +59,7 @@ def test_resolve_before_arrival_does_nothing():
     assert piece.state is PieceState.MOVING
 
 
-def test_resolve_at_arrival_relocates_and_returns_to_idle():
+def test_resolve_at_arrival_relocates_and_puts_the_piece_on_cooldown():
     board = board_with_rook()
     piece = board.piece_at(Position(0, 0))
     arbiter = make_arbiter(board)
@@ -64,7 +67,18 @@ def test_resolve_at_arrival_relocates_and_returns_to_idle():
     arbiter.resolve(2000)
     assert board.is_empty(Position(0, 0))
     assert board.piece_at(Position(0, 2)) is piece
+    assert piece.state is PieceState.COOLDOWN  # just landed, not free yet
+    arbiter.resolve(3000)  # cooldown (2000 + 1000) has now elapsed
     assert piece.state is PieceState.IDLE
+
+
+def test_cooldown_of_zero_lands_straight_to_idle():
+    board = board_with_rook()
+    piece = board.piece_at(Position(0, 0))
+    arbiter = make_arbiter(board, cooldown_ms=0)
+    arbiter.start_motion(piece, Position(0, 0), Position(0, 2), now_ms=0)
+    arbiter.resolve(2000)
+    assert piece.state is PieceState.IDLE  # no cooldown -> free in the same pass
 
 
 def test_arriving_piece_captures_a_settled_piece_at_the_destination():

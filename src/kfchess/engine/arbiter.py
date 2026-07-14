@@ -1,6 +1,6 @@
 """RealTimeArbiter: moves take time, pieces collide, and pieces can jump in place.
 
-Owns the in-flight motions and the active jumps.
+Owns the in-flight motions, the active jumps, and the landing cooldowns.
 
 Motions: starting one records where a piece is going, when it started, and when it
 arrives (``now + distance * ms_per_cell``); the piece stays at its origin, marked
@@ -12,6 +12,12 @@ Jumps: a jump keeps a piece airborne *in place* on its cell (marked JUMPING) unt
 cell (arrival time at or before the jump's end), the jumper captures the arriver
 instead of the other way round; the jumper does not move. If nothing arrives, the
 jump lands (returns to IDLE) with the piece unmoved.
+
+Cooldowns: when a motion lands, the piece is marked COOLDOWN until
+``now + cooldown_ms`` instead of going straight to IDLE, so it cannot start a new
+move until the cooldown elapses (the RuleEngine rejects a COOLDOWN piece the same
+way it rejects a MOVING one). ``resolve`` frees cooled pieces back to IDLE as time
+passes. A ``cooldown_ms`` of 0 frees the piece in the same pass — i.e. no cooldown.
 
 Collisions: because a moving piece stays at its origin until it arrives, two enemies
 crossing toward each other's squares are resolved by resolving arrivals in start
@@ -53,6 +59,14 @@ class Jump:
     end_ms: int
 
 
+@dataclass(frozen=True)
+class Cooldown:
+    """A piece that just landed and is unavailable to move until ``ready_ms``."""
+
+    piece: Piece
+    ready_ms: int
+
+
 class RealTimeArbiter:
     """Tracks active motions and jumps and applies them as time advances."""
 
@@ -62,13 +76,16 @@ class RealTimeArbiter:
         ms_per_cell: int,
         promotion: Promotion,
         jump_duration_ms: int,
+        cooldown_ms: int,
     ) -> None:
         self._board = board
         self._ms_per_cell = ms_per_cell
         self._promotion = promotion
         self._jump_duration_ms = jump_duration_ms
+        self._cooldown_ms = cooldown_ms
         self._motions: List[Motion] = []
         self._jumps: List[Jump] = []
+        self._cooldowns: List[Cooldown] = []
         self._next_sequence = 0
         self._game_over = False
 
@@ -123,7 +140,7 @@ class RealTimeArbiter:
                 if occupant.piece_type.is_king:
                     self._game_over = True  # capturing a king ends the game
             self._board.place(motion.target, motion.piece)
-            motion.piece.state = PieceState.IDLE
+            self._begin_cooldown(motion.piece, now_ms)
             self._promotion.apply(motion.piece, motion.target, self._board)
 
         # Keep only motions still in flight whose piece was not captured.
@@ -138,6 +155,17 @@ class RealTimeArbiter:
             if jump.end_ms <= now_ms:
                 self._land(jump.piece)
 
+        # Free any pieces whose landing cooldown has now elapsed, and forget any
+        # cooling piece that was captured in the meantime.
+        for cooldown in self._cooldowns:
+            if cooldown.ready_ms <= now_ms and cooldown.piece not in captured:
+                cooldown.piece.state = PieceState.IDLE
+        self._cooldowns = [
+            c
+            for c in self._cooldowns
+            if c.ready_ms > now_ms and c.piece not in captured
+        ]
+
     def _airborne_defender(
         self, cell: Position, arriver: Piece, arrival_ms: int
     ) -> Optional[Piece]:
@@ -150,6 +178,16 @@ class RealTimeArbiter:
             ):
                 return jump.piece
         return None
+
+    def _begin_cooldown(self, piece: Piece, now_ms: int) -> None:
+        """Put a just-landed piece on cooldown until ``now_ms + cooldown_ms``.
+
+        The piece is marked ``COOLDOWN`` and freed back to ``IDLE`` by ``resolve``
+        once the cooldown elapses. With ``cooldown_ms == 0`` the ready time equals
+        ``now_ms``, so ``resolve`` frees it in the same pass — i.e. no cooldown.
+        """
+        piece.state = PieceState.COOLDOWN
+        self._cooldowns.append(Cooldown(piece, now_ms + self._cooldown_ms))
 
     def _land(self, piece: Piece) -> None:
         """Return a jumping piece to rest, in place, and drop its jump."""
