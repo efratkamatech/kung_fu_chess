@@ -227,6 +227,27 @@ def test_midpath_tie_is_won_by_the_piece_that_started_first():
     assert board.is_empty(Position(2, 4))  # black never reached its target
 
 
+def test_friend_met_midpath_stops_one_cell_short_while_the_other_continues():
+    # Two white rooks cross on cell (2,2). The horizontal one enters it first; the
+    # vertical one arrives later, cannot capture a friend, and stops at (3,2) — the
+    # cell just before the meeting cell on its path. The first rook continues.
+    board = Board(5, 5)
+    horizontal = rook(Color.WHITE)
+    vertical = rook(Color.WHITE)
+    board.place(Position(2, 0), horizontal)
+    board.place(Position(4, 2), vertical)
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(horizontal, Position(2, 0), Position(2, 4), now_ms=0)   # (2,2) at 2000
+    arbiter.start_motion(vertical, Position(4, 2), Position(0, 2), now_ms=500)   # (2,2) at 2500
+    arbiter.resolve(4500)
+
+    assert board.piece_at(Position(3, 2)) is vertical  # stopped one cell short
+    assert vertical.state is PieceState.IDLE           # landed and cooled down by now
+    assert board.piece_at(Position(2, 4)) is horizontal  # the other reached its target
+    assert board.is_empty(Position(0, 2))              # the blocked rook never got there
+    assert board.is_empty(Position(2, 2))              # nobody settled on the meeting cell
+
+
 def test_arriving_pawn_on_its_far_row_is_promoted():
     board = Board(2, 3)
     pawn = Piece(PieceType("P", "pawn", is_pawn=True), Color.WHITE)

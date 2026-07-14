@@ -258,45 +258,48 @@ class RealTimeArbiter:
         ]
 
     def _resolve_path_collisions(self, now_ms: int) -> None:
-        """Eat pieces that met mid-path: when two enemy motions share a cell during
-        overlapping windows, the one that entered *later* captures the other and keeps
-        going. The eaten piece (still on its origin) is removed and its motion dropped.
+        """Resolve pieces that meet mid-path, earliest meeting first, until none is
+        left at or before ``now_ms``.
 
-        Repeats until no such collision remains at or before ``now_ms`` — one eat can
-        expose the winner to a further collision as it continues.
+        Two motions "meet" when they share a cell during overlapping windows. The
+        piece that reaches that cell *later* is the active one: against an enemy
+        already there it captures it and keeps moving (``_eat``); against a friend it
+        cannot enter and stops one cell short (``_block``). Repeating matters — a
+        winner that continues can meet a further piece down its path.
         """
         while True:
-            loser = self._earliest_path_collision(now_ms)
-            if loser is None:
+            event = self._earliest_collision(now_ms)
+            if event is None:
                 return
-            self._board.remove(loser.source)  # it was still sitting on its origin
-            if loser.piece.piece_type.is_king:
-                self._game_over = True  # a king eaten in transit still ends the game
-            self._motions = [m for m in self._motions if m is not loser]
+            _at, kind, motion, cell = event
+            if kind == "eat":
+                self._eat(motion)
+            else:  # "block"
+                self._block(motion, cell, _at)
 
-    def _earliest_path_collision(self, now_ms: int) -> Optional[Motion]:
-        """The motion whose piece is eaten in the earliest mid-path enemy collision at
-        or before ``now_ms``, or ``None``. The winner is the later cell-entrant; on an
-        exact tie the later-started motion is the one eaten."""
-        best: Optional[tuple] = None  # (collision_ms, loser)
+    def _earliest_collision(self, now_ms: int) -> Optional[tuple]:
+        """The earliest mid-path meeting among the active motions at or before
+        ``now_ms``, as ``(at_ms, kind, motion, cell)`` — or ``None``."""
+        best: Optional[tuple] = None
         motions = self._motions
         for i in range(len(motions)):
             for j in range(i + 1, len(motions)):
-                a, b = motions[i], motions[j]
-                if a.piece.color == b.piece.color:
-                    continue  # same colour blocks rather than eats (rule handled later)
-                overlap = self._earliest_shared_cell(a, b, now_ms)
-                if overlap is not None and (best is None or overlap[0] < best[0]):
-                    best = overlap
-        return None if best is None else best[1]
+                event = self._collision_event(motions[i], motions[j], now_ms)
+                if event is not None and (best is None or event[0] < best[0]):
+                    best = event
+        return best
 
     @staticmethod
-    def _earliest_shared_cell(
-        a: Motion, b: Motion, now_ms: int
-    ) -> Optional[tuple]:
-        """The earliest shared cell where ``a`` and ``b`` overlap in time, at or before
-        ``now_ms``, as ``(overlap_start_ms, loser)`` — or ``None``. The loser is the
-        earlier entrant; on an equal entry time the later-started motion loses."""
+    def _collision_event(a: Motion, b: Motion, now_ms: int) -> Optional[tuple]:
+        """The earliest cell where ``a`` and ``b`` overlap in time, at or before
+        ``now_ms``, as ``(at_ms, kind, motion, cell)`` — or ``None``.
+
+        ``kind`` is ``"eat"`` (``motion`` is the piece captured) or ``"block"``
+        (``motion`` is the piece that stops just before ``cell``). The later entrant
+        is the active one; on an equal entry time the piece that *started* first
+        prevails, so the other is the one captured or stopped.
+        """
+        same_colour = a.piece.color == b.piece.color
         best: Optional[tuple] = None
         for cell_a, enter_a, leave_a in a.cell_timeline():
             for cell_b, enter_b, leave_b in b.cell_timeline():
@@ -305,15 +308,45 @@ class RealTimeArbiter:
                 start = max(enter_a, enter_b)
                 if start >= min(leave_a, leave_b) or start > now_ms:
                     continue  # windows do not overlap, or the meeting is still future
-                if enter_a > enter_b:
-                    loser = b  # a entered later -> a eats, b is eaten
-                elif enter_b > enter_a:
-                    loser = a
-                else:  # entered together: the piece that started first survives
-                    loser = a if a.start_ms > b.start_ms else b
+                if enter_a == enter_b:  # tie: the piece that started first prevails
+                    prevailer, yielder = (
+                        (a, b) if a.start_ms <= b.start_ms else (b, a)
+                    )
+                    motion = yielder  # yielder is stopped (friend) or eaten (enemy)
+                else:
+                    later = a if enter_a > enter_b else b
+                    earlier = b if later is a else a
+                    motion = later if same_colour else earlier
+                kind = "block" if same_colour else "eat"
                 if best is None or start < best[0]:
-                    best = (start, loser)
+                    best = (start, kind, motion, cell_a)
         return best
+
+    def _eat(self, eaten: Motion) -> None:
+        """Remove an eaten piece (still on its origin) and drop its motion."""
+        self._board.remove(eaten.source)
+        if eaten.piece.piece_type.is_king:
+            self._game_over = True  # a king eaten in transit still ends the game
+        self._motions = [m for m in self._motions if m is not eaten]
+
+    def _block(self, blocked: Motion, cell: Position, at_ms: int) -> None:
+        """Stop ``blocked`` on the cell just before ``cell`` on its own path: land it
+        there (on cooldown from ``at_ms``) and drop its motion."""
+        stop_cell = self._cell_before(blocked, cell)
+        self._board.remove(blocked.source)
+        self._board.place(stop_cell, blocked.piece)
+        self._begin_cooldown(blocked.piece, at_ms)
+        self._motions = [m for m in self._motions if m is not blocked]
+
+    @staticmethod
+    def _cell_before(motion: Motion, cell: Position) -> Position:
+        """The cell ``motion`` occupies just before ``cell`` on its path (its own
+        source if ``cell`` is the first step)."""
+        timeline = motion.cell_timeline()
+        for index, (occupied, _enter, _leave) in enumerate(timeline):
+            if occupied == cell:
+                return timeline[index - 1][0] if index > 0 else motion.source
+        return motion.source  # cell is not on the path (should not happen)
 
     def _airborne_defender(
         self, cell: Position, arriver: Piece, arrival_ms: int
