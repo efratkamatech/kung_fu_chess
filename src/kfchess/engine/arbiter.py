@@ -232,6 +232,13 @@ class RealTimeArbiter:
 
             self._board.remove(motion.source)
             occupant = self._board.piece_at(motion.target)
+            if occupant is not None and occupant.color == motion.piece.color:
+                # A same-colour piece reached the destination first: you cannot land
+                # on your own, so stop one cell short instead of capturing it.
+                stop_cell = self._cell_before(motion, motion.target)
+                self._board.place(stop_cell, motion.piece)
+                self._begin_cooldown(motion.piece, now_ms)
+                continue
             if occupant is not None:
                 captured.add(occupant)  # this piece is taken; cancel its motion below
                 if occupant.piece_type.is_king:

@@ -251,6 +251,25 @@ def test_friend_met_midpath_stops_one_cell_short_while_the_other_continues():
     assert board.is_empty(Position(2, 2))              # nobody settled on the meeting cell
 
 
+def test_same_colour_reaching_a_taken_destination_stops_one_cell_short():
+    # Two white rooks head for (2,2). The vertical one gets there first and settles;
+    # the horizontal one arrives later and, unable to land on a friend, stops at (2,1)
+    # instead of capturing it.
+    board = Board(5, 5)
+    first = rook(Color.WHITE)
+    second = rook(Color.WHITE)
+    board.place(Position(0, 2), first)
+    board.place(Position(2, 0), second)
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(first, Position(0, 2), Position(2, 2), now_ms=0)      # arrives 2000
+    arbiter.start_motion(second, Position(2, 0), Position(2, 2), now_ms=1500)  # arrives 3500
+    arbiter.resolve(4500)
+
+    assert board.piece_at(Position(2, 2)) is first   # first settled, not captured
+    assert board.piece_at(Position(2, 1)) is second  # second stopped one cell short
+    assert board.is_empty(Position(2, 0))            # second left its origin
+
+
 def test_arriving_pawn_on_its_far_row_is_promoted():
     board = Board(2, 3)
     pawn = Piece(PieceType("P", "pawn", is_pawn=True), Color.WHITE)
@@ -312,8 +331,9 @@ def test_airborne_defender_ignores_a_friendly_arriver():
     arbiter = make_arbiter(board)
     arbiter.start_jump(jumper, Position(0, 0), now_ms=0)
     arbiter.start_motion(friend, Position(0, 1), Position(0, 0), now_ms=0)  # arrives 1000
-    arbiter.resolve(1000)  # same colour -> not an airborne capture; normal resolution
-    assert board.piece_at(Position(0, 0)) is friend
+    arbiter.resolve(1000)  # same colour -> no airborne capture, and no landing on a friend
+    assert board.piece_at(Position(0, 0)) is jumper  # jumper kept its square, uncaptured
+    assert board.piece_at(Position(0, 1)) is friend  # friendly arriver stopped one cell short
 
 
 def test_airborne_defender_only_matches_its_own_cell():
