@@ -57,7 +57,9 @@ class GraphicsApp:
             self._engine.wait(min(dt_ms, self._max_dt_ms))
 
             frame = self._renderer.render(
-                self._engine.board, self._engine.moving_pieces()
+                self._engine.board,
+                self._engine.moving_pieces(),
+                self._engine.now_ms,
             )
             key = frame.show(self._window_name, self._frame_delay_ms)
 

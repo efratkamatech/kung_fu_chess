@@ -44,6 +44,11 @@ class GameEngine:
         """The current board state (read it to render or interpret clicks)."""
         return self._board
 
+    @property
+    def now_ms(self) -> int:
+        """The current game time in ms — used to drive animation in sync with motion."""
+        return self._clock.now_ms
+
     def moving_pieces(self) -> List[MovingPiece]:
         """Where each in-flight piece is *right now* (at the current clock time).
 

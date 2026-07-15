@@ -90,3 +90,6 @@ STATE_MOVE = "move"
 STATE_JUMP = "jump"
 STATE_SHORT_REST = "short_rest"
 STATE_LONG_REST = "long_rest"
+
+# Fallback animation frame rate if a state's config.json omits ``frames_per_sec``.
+FPS_DEFAULT = 8

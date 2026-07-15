@@ -12,7 +12,7 @@ from __future__ import annotations
 from kfchess.app.bootstrap import build_game
 from kfchess.config import BOARD_CSV, BOARD_IMAGE, CELL_PX, PIECES_DIR
 from kfchess.graphics.app import GraphicsApp
-from kfchess.graphics.assets import SpriteBank, load_board_csv
+from kfchess.graphics.assets import AnimationBank, load_board_csv
 from kfchess.graphics.renderer import BoardRenderer
 
 
@@ -20,6 +20,6 @@ def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
     """Load assets, build the core game, and return the ready-to-run windowed app."""
     board = load_board_csv(BOARD_CSV)
     engine, _controller = build_game(board)  # _controller wired to the mouse in M4
-    sprite_bank = SpriteBank(PIECES_DIR, CELL_PX)
-    renderer = BoardRenderer(BOARD_IMAGE, sprite_bank, CELL_PX)
+    animation_bank = AnimationBank(PIECES_DIR, CELL_PX)
+    renderer = BoardRenderer(BOARD_IMAGE, animation_bank, CELL_PX)
     return GraphicsApp(engine, renderer, window_name)

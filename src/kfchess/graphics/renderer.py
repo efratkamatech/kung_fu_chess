@@ -15,37 +15,45 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
-from kfchess.config import STATE_IDLE
 from kfchess.engine.arbiter import MovingPiece
-from kfchess.graphics.assets import SpriteBank, piece_token
+from kfchess.graphics.assets import AnimationBank, piece_token
 from kfchess.graphics.img import Img
+from kfchess.graphics.piece_view import PieceView
 from kfchess.model.board import Board
-from kfchess.model.piece import PieceState
+from kfchess.model.piece import Piece, PieceState
 from kfchess.model.position import Position
 
 PathLike = Union[str, Path]
 
 
 class BoardRenderer:
-    """Composites a board image from the background and the pieces' sprites."""
+    """Composites a board image from the background and the pieces' animated sprites."""
 
     def __init__(
-        self, board_image_path: PathLike, sprite_bank: SpriteBank, cell_px: int
+        self,
+        board_image_path: PathLike,
+        animation_bank: AnimationBank,
+        cell_px: int,
+        piece_view: Optional[PieceView] = None,
     ) -> None:
         self._board_image_path = Path(board_image_path)
-        self._bank = sprite_bank
+        self._bank = animation_bank
         self._cell_px = cell_px
+        # One PieceView for the whole game: it must remember per-piece animation
+        # timing across frames, so it is created once here, not per render call.
+        self._piece_view = piece_view or PieceView()
         self._background: Optional[Img] = None  # loaded+scaled once, then copied
 
     def render(
-        self, board: Board, moving_pieces: Iterable[MovingPiece] = ()
+        self, board: Board, moving_pieces: Iterable[MovingPiece] = (), now_ms: int = 0
     ) -> Img:
         """A freshly drawn frame: background, settled pieces, then in-flight pieces.
 
-        A piece in flight still occupies its *origin* cell on the board (the core
-        keeps it there until it arrives), so settled drawing skips ``MOVING`` pieces
-        and they are drawn instead at their interpolated position from
-        ``moving_pieces`` — otherwise the same piece would appear twice.
+        Each piece is drawn with the animation frame for its current state at
+        ``now_ms``. A piece in flight still occupies its *origin* cell on the board
+        (the core keeps it there until it arrives), so settled drawing skips
+        ``MOVING`` pieces and they are drawn instead at their interpolated position
+        from ``moving_pieces`` — otherwise the same piece would appear twice.
         """
         canvas = self._board_background(board).copy()
         for row in range(board.rows):
@@ -53,15 +61,20 @@ class BoardRenderer:
                 piece = board.piece_at(Position(row, col))
                 if piece is None or piece.state is PieceState.MOVING:
                     continue
-                sprite = self._bank.sprite(piece_token(piece), STATE_IDLE)
-                sprite.draw_on(canvas, col * self._cell_px, row * self._cell_px)
+                frame = self._piece_frame(piece, now_ms)
+                frame.draw_on(canvas, col * self._cell_px, row * self._cell_px)
         for moving in moving_pieces:
-            sprite = self._bank.sprite(piece_token(moving.piece), STATE_IDLE)
+            frame = self._piece_frame(moving.piece, now_ms)
             row_f, col_f = moving.position  # fractional (row, col)
-            sprite.draw_on(
+            frame.draw_on(
                 canvas, round(col_f * self._cell_px), round(row_f * self._cell_px)
             )
         return canvas
+
+    def _piece_frame(self, piece: Piece, now_ms: int) -> Img:
+        """The animation frame to draw for ``piece`` right now (by its state + timing)."""
+        state, elapsed_ms = self._piece_view.state_and_elapsed(piece, now_ms)
+        return self._bank.animation(piece_token(piece), state).frame_at(elapsed_ms)
 
     def _board_background(self, board: Board) -> Img:
         """The board image scaled to the board's pixel size, loaded once and cached.

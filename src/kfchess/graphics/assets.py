@@ -14,14 +14,16 @@ Only the graphics layer imports this; the text/VPL path is untouched.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
-from kfchess.config import STATE_IDLE
+from kfchess.config import FPS_DEFAULT, STATE_IDLE
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import PieceTypeRegistry, standard_piece_types
+from kfchess.graphics.animation import Animation
 from kfchess.graphics.img import Img
 
 PathLike = Union[str, Path]
@@ -70,27 +72,43 @@ def load_board_csv(
     return Board.from_grid(grid)
 
 
-class SpriteBank:
-    """Loads piece sprites on demand and caches them (keyed by token/state/frame).
+class AnimationBank:
+    """Loads whole animations (frames + timing) on demand and caches them.
 
-    Caching matters: the frame loop renders many times a second, and re-reading and
-    re-scaling PNGs every frame would be wasteful. Sprites are scaled to ``cell_px``
-    once, on first use.
+    Each ``(token, state)`` is loaded once — its ``config.json`` gives the frame rate
+    and loop flag, and its ``sprites/`` folder gives the frames, scaled to ``cell_px``.
+    Caching matters: the frame loop renders many times a second, so re-reading and
+    re-scaling PNGs every frame would be wasteful.
     """
 
     def __init__(self, pieces_dir: PathLike, cell_px: int) -> None:
         self._pieces_dir = Path(pieces_dir)
         self._cell_px = cell_px
-        self._cache: Dict[Tuple[str, str, int], Img] = {}
+        self._cache: Dict[Tuple[str, str], Animation] = {}
 
-    def sprite(self, token: str, state: str = STATE_IDLE, frame: int = 1) -> Img:
-        """The sprite image for ``token`` in ``state`` at 1-based ``frame`` index."""
-        key = (token, state, frame)
+    def animation(self, token: str, state: str = STATE_IDLE) -> Animation:
+        """The :class:`Animation` for ``token`` in ``state`` (loaded once, then cached)."""
+        key = (token, state)
         cached = self._cache.get(key)
         if cached is None:
-            path = (
-                self._pieces_dir / token / "states" / state / "sprites" / f"{frame}.png"
-            )
-            cached = Img().read(path, size=(self._cell_px, self._cell_px))
+            cached = self._load(token, state)
             self._cache[key] = cached
         return cached
+
+    def _load(self, token: str, state: str) -> Animation:
+        """Read a state's ``config.json`` and its numbered PNG frames into an Animation."""
+        state_dir = self._pieces_dir / token / "states" / state
+        config = json.loads((state_dir / "config.json").read_text(encoding="utf-8"))
+        graphics = config.get("graphics", {})
+        fps = graphics.get("frames_per_sec", FPS_DEFAULT)
+        loop = graphics.get("is_loop", True)
+        # Sort frames by their numeric filename (1.png, 2.png, ...), not lexically,
+        # so 10.png would follow 9.png rather than 1.png.
+        frame_paths = sorted(
+            (state_dir / "sprites").glob("*.png"), key=lambda p: int(p.stem)
+        )
+        frames = [
+            Img().read(path, size=(self._cell_px, self._cell_px))
+            for path in frame_paths
+        ]
+        return Animation(frames, fps, loop)
