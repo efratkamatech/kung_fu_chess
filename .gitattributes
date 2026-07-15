@@ -2,3 +2,10 @@
 # platform. The grader (VPL) runs on Linux and expects '\n'; pinning LF keeps
 # output and fixtures byte-identical whether developed on Windows or Linux.
 * text=auto eol=lf
+
+# Graphics assets are binary: never run line-ending normalization on them, or the
+# bytes get corrupted. `text=auto` already auto-detects most, but pin them so it
+# is explicit and safe.
+*.png binary
+*.jpg binary
+*.jpeg binary
