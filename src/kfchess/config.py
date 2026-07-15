@@ -1,4 +1,4 @@
-"""Central configuration: the text-fixture vocabulary and validation codes.
+"""Central configuration: the text-fixture vocabulary, validation codes, and asset paths.
 
 Business logic must never hardcode these tokens. Every layer imports them from
 here so the wire/text format lives in exactly one place — critical because VPL
@@ -71,3 +71,22 @@ ERR_UNKNOWN_COMMAND = "UNKNOWN_COMMAND"
 def error_message(code: str) -> str:
     """Format a validation code as the exact stdout line: ``ERROR <CODE>``."""
     return f"{ERROR_PREFIX}{code}"
+
+
+# --- Graphics assets (used only by the graphics layer, never by the text core) --
+# On-disk locations of the image assets, resolved relative to this file so the app
+# runs from any working directory. The text/VPL path never touches these, so their
+# absence on the grader (which uploads only main.py + src/) is harmless.
+from pathlib import Path  # noqa: E402  (kept near the paths it supports)
+
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+BOARD_IMAGE = ASSETS_DIR / "board.png"   # board background image
+BOARD_CSV = ASSETS_DIR / "board.csv"     # starting position, one comma-separated row per line
+PIECES_DIR = ASSETS_DIR / "pieces_mine"  # per-piece sprite folders, named by token (wK, bP, ...)
+
+# Sprite state folder names (match the on-disk assets/pieces_mine/<token>/states/).
+STATE_IDLE = "idle"
+STATE_MOVE = "move"
+STATE_JUMP = "jump"
+STATE_SHORT_REST = "short_rest"
+STATE_LONG_REST = "long_rest"
