@@ -12,10 +12,11 @@ clicks, or the text format (those belong to the Controller and Text I/O layers).
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional, Sequence
 
 from kfchess.engine.arbiter import MovingPiece, RealTimeArbiter
 from kfchess.engine.clock import Clock
+from kfchess.engine.events import GameObserver
 from kfchess.model.board import Board
 from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
@@ -25,7 +26,7 @@ from kfchess.rules.rule_engine import RuleEngine
 class GameEngine:
     """Validates moves, starts timed motions, and advances/resolves the clock."""
 
-    __slots__ = ("_board", "_clock", "_rule_engine", "_arbiter")
+    __slots__ = ("_board", "_clock", "_rule_engine", "_arbiter", "_observers")
 
     def __init__(
         self,
@@ -33,11 +34,19 @@ class GameEngine:
         clock: Clock,
         rule_engine: RuleEngine,
         arbiter: RealTimeArbiter,
+        observers: Optional[List[GameObserver]] = None,
     ) -> None:
         self._board = board
         self._clock = clock
         self._rule_engine = rule_engine
         self._arbiter = arbiter
+        # The same list the arbiter holds, so move-starts (emitted here) and captures
+        # (emitted by the arbiter) reach the same observers. Empty on the text path.
+        self._observers = observers if observers is not None else []
+
+    def add_observer(self, observer: GameObserver) -> None:
+        """Register an observer for game events (moves, captures, game over)."""
+        self._observers.append(observer)
 
     @property
     def board(self) -> Board:
@@ -69,6 +78,8 @@ class GameEngine:
             return
         piece = self._board.piece_at(source)
         self._arbiter.start_motion(piece, source, target, self._clock.now_ms)
+        for observer in self._observers:
+            observer.on_move_started(piece, source, target)
 
     def request_jump(self, cell: Position) -> None:
         """Make the piece on ``cell`` jump in place, if it can.

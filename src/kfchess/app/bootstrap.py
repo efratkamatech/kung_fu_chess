@@ -43,9 +43,12 @@ def build_game(board: Board) -> Tuple[GameEngine, Controller]:
     clock = Clock()
     rule_engine = RuleEngine(standard_movement_rules())
     promotion = Promotion(PAWN_FORWARD, standard_piece_types().get("Q"))
+    # One observer list, shared by the arbiter (captures/game-over) and the engine
+    # (move-starts). Empty here; the graphics layer registers listeners onto it.
+    observers = []
     arbiter = RealTimeArbiter(
-        board, MS_PER_CELL, promotion, JUMP_DURATION_MS, COOLDOWN_MS
+        board, MS_PER_CELL, promotion, JUMP_DURATION_MS, COOLDOWN_MS, observers
     )
-    engine = GameEngine(board, clock, rule_engine, arbiter)
+    engine = GameEngine(board, clock, rule_engine, arbiter, observers)
     controller = Controller(engine)
     return engine, controller

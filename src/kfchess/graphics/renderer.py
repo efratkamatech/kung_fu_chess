@@ -15,9 +15,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
-from kfchess.config import SELECT_COLOR
+from kfchess.config import PANEL_BG, SELECT_COLOR
 from kfchess.engine.arbiter import MovingPiece
 from kfchess.graphics.assets import AnimationBank, piece_token
+from kfchess.graphics.hud import Hud
 from kfchess.graphics.img import Img
 from kfchess.graphics.piece_view import PieceView
 from kfchess.model.board import Board
@@ -28,7 +29,7 @@ PathLike = Union[str, Path]
 
 
 class BoardRenderer:
-    """Composites a board image from the background and the pieces' animated sprites."""
+    """Composites a frame: the board with animated sprites, plus an optional HUD panel."""
 
     def __init__(
         self,
@@ -36,6 +37,8 @@ class BoardRenderer:
         animation_bank: AnimationBank,
         cell_px: int,
         piece_view: Optional[PieceView] = None,
+        hud: Optional[Hud] = None,
+        panel_px: int = 0,
     ) -> None:
         self._board_image_path = Path(board_image_path)
         self._bank = animation_bank
@@ -43,6 +46,8 @@ class BoardRenderer:
         # One PieceView for the whole game: it must remember per-piece animation
         # timing across frames, so it is created once here, not per render call.
         self._piece_view = piece_view or PieceView()
+        self._hud = hud
+        self._panel_px = panel_px  # width of the HUD panel to the right (0 = no panel)
         self._background: Optional[Img] = None  # loaded+scaled once, then copied
 
     def render(
@@ -61,7 +66,7 @@ class BoardRenderer:
         from ``moving_pieces`` — otherwise the same piece would appear twice. If
         ``selected`` is given, its cell is outlined last so it sits on top.
         """
-        canvas = self._board_background(board).copy()
+        canvas = self._new_canvas(board)
         for row in range(board.rows):
             for col in range(board.cols):
                 piece = board.piece_at(Position(row, col))
@@ -83,6 +88,22 @@ class BoardRenderer:
                 self._cell_px,
                 SELECT_COLOR,
             )
+        if self._hud is not None:
+            self._hud.draw(canvas)
+        return canvas
+
+    def _new_canvas(self, board: Board) -> Img:
+        """A fresh frame canvas: the board background, plus a blank HUD panel if any."""
+        board_bg = self._board_background(board)
+        if self._panel_px <= 0:
+            return board_bg.copy()
+        canvas = Img.blank(
+            board.cols * self._cell_px + self._panel_px,
+            board.rows * self._cell_px,
+            channels=3,
+            color=PANEL_BG,
+        )
+        board_bg.draw_on(canvas, 0, 0)
         return canvas
 
     def _piece_frame(self, piece: Piece, now_ms: int) -> Img:

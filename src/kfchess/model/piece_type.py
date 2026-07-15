@@ -36,6 +36,7 @@ class PieceType:
     name: str  # human-readable name, e.g. "king"
     is_king: bool = False  # capturing this piece ends the game
     is_pawn: bool = False  # promotes on reaching the far row (Iteration 10)
+    cost: int = 0  # material value, summed into the captor's score (graphics HUD)
 
 
 class PieceTypeRegistry:
@@ -69,12 +70,12 @@ class PieceTypeRegistry:
 # The canonical starting set of pieces. This is the single place new standard
 # pieces would be added; custom games can build their own registry instead.
 _STANDARD_PIECES = (
-    PieceType("K", "king", is_king=True),
-    PieceType("Q", "queen"),
-    PieceType("R", "rook"),
-    PieceType("B", "bishop"),
-    PieceType("N", "knight"),
-    PieceType("P", "pawn", is_pawn=True),
+    PieceType("K", "king", is_king=True, cost=0),  # priceless: its capture ends the game
+    PieceType("Q", "queen", cost=9),
+    PieceType("R", "rook", cost=5),
+    PieceType("B", "bishop", cost=3),
+    PieceType("N", "knight", cost=3),
+    PieceType("P", "pawn", is_pawn=True, cost=1),
 )
 
 

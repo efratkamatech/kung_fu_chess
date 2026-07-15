@@ -96,3 +96,11 @@ FPS_DEFAULT = 8
 
 # Colour (B, G, R) of the outline drawn around the currently selected cell.
 SELECT_COLOR = (0, 255, 0)
+
+# --- HUD (the side panel with names, score, and the moves log) ---------------
+PANEL_PX = 340                     # width in pixels of the side panel
+PANEL_BG = (32, 32, 32)            # panel background colour (B, G, R)
+HUD_TEXT_COLOR = (235, 235, 235)   # default text colour
+HUD_MOVES_VISIBLE = 12             # how many recent moves the log shows
+WHITE_PLAYER_NAME = "White"
+BLACK_PLAYER_NAME = "Black"

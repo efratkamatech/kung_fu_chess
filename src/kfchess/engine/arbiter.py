@@ -36,8 +36,9 @@ the RuleEngine before an action starts), pixels, or the text format.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
+from kfchess.engine.events import GameObserver
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
 from kfchess.model.position import Position
@@ -155,12 +156,16 @@ class RealTimeArbiter:
         promotion: Promotion,
         jump_duration_ms: int,
         cooldown_ms: int,
+        observers: Optional[Sequence[GameObserver]] = None,
     ) -> None:
         self._board = board
         self._ms_per_cell = ms_per_cell
         self._promotion = promotion
         self._jump_duration_ms = jump_duration_ms
         self._cooldown_ms = cooldown_ms
+        # Shared with the GameEngine so captures (here) and move-starts (there) reach
+        # the same listeners. Empty by default, so the text path emits to no one.
+        self._observers = observers if observers is not None else []
         self._motions: List[Motion] = []
         self._jumps: List[Jump] = []
         self._cooldowns: List[Cooldown] = []
@@ -172,6 +177,20 @@ class RealTimeArbiter:
     def is_game_over(self) -> bool:
         """True once a king has been captured (the game has ended)."""
         return self._game_over
+
+    def _notify_capture(self, victim: Piece) -> None:
+        """Tell observers a piece was captured, and end the game if it was a king."""
+        for observer in self._observers:
+            observer.on_capture(victim)
+        if victim.piece_type.is_king:
+            self._end_game()
+
+    def _end_game(self) -> None:
+        """Mark the game over and notify observers once (idempotent)."""
+        if not self._game_over:
+            self._game_over = True
+            for observer in self._observers:
+                observer.on_game_over()
 
     def moving_pieces(self, now_ms: int) -> List[MovingPiece]:
         """A snapshot of every in-flight piece and its interpolated position at
@@ -229,6 +248,7 @@ class RealTimeArbiter:
                 # The airborne jumper captures the arriving enemy; it does not move.
                 self._board.remove(motion.source)
                 captured.add(motion.piece)
+                self._notify_capture(motion.piece)
                 self._land(defender)
                 continue
 
@@ -244,8 +264,7 @@ class RealTimeArbiter:
                 continue
             if occupant is not None:
                 captured.add(occupant)  # this piece is taken; cancel its motion below
-                if occupant.piece_type.is_king:
-                    self._game_over = True  # capturing a king ends the game
+                self._notify_capture(occupant)  # ends the game too if it was a king
             self._board.place(motion.target, motion.piece)
             self._settle_ms[motion.target] = now_ms
             self._begin_cooldown(motion.piece, now_ms)
@@ -401,14 +420,12 @@ class RealTimeArbiter:
         self._settle_ms.pop(cell, None)
         if victim is not None:
             self._cooldowns = [c for c in self._cooldowns if c.piece is not victim]
-            if victim.piece_type.is_king:
-                self._game_over = True  # a king taken in passing still ends the game
+            self._notify_capture(victim)  # ends the game too if it was a king
 
     def _eat(self, eaten: Motion) -> None:
         """Remove an eaten piece (still on its origin) and drop its motion."""
         self._board.remove(eaten.source)
-        if eaten.piece.piece_type.is_king:
-            self._game_over = True  # a king eaten in transit still ends the game
+        self._notify_capture(eaten.piece)  # ends the game too if it was a king
         self._motions = [m for m in self._motions if m is not eaten]
 
     def _block(self, blocked: Motion, cell: Position, at_ms: int) -> None:

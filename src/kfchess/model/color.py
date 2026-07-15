@@ -25,6 +25,11 @@ class Color(Enum):
         """The one-letter fixture prefix for this color (``'w'`` or ``'b'``)."""
         return self.value
 
+    @property
+    def opponent(self) -> "Color":
+        """The other side — used to credit a capture to the capturing player."""
+        return Color.BLACK if self is Color.WHITE else Color.WHITE
+
     @classmethod
     def from_prefix(cls, prefix: str) -> "Color":
         """Resolve a fixture prefix to a Color.
