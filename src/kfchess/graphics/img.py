@@ -196,11 +196,26 @@ class Img:
     def show(self, window_name: str = "KungFu Chess", wait_ms: int = 0) -> int:
         """Display the image in a window and return the key pressed within ``wait_ms``.
 
-        ``wait_ms == 0`` blocks until a key is pressed; the frame loop passes ``1`` to
-        show a frame and move on. Returns the ``cv2.waitKey`` code (``-1`` if none).
+        ``wait_ms == 0`` blocks until a key is pressed; the frame loop passes a small
+        value to show a frame and move on. Returns the ``cv2.waitKey`` code (``-1`` if
+        no key was pressed).
         """
         cv2.imshow(window_name, self._require())
         return cv2.waitKey(wait_ms)
+
+    @staticmethod
+    def is_window_closed(window_name: str) -> bool:
+        """True once the window has been closed (e.g. the user clicked its X button).
+
+        Also true before the window exists, so the frame loop must show at least one
+        frame (which creates the window) before it starts checking this.
+        """
+        return cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
+
+    @staticmethod
+    def destroy_windows() -> None:
+        """Close every OpenCV window (called once when the frame loop ends)."""
+        cv2.destroyAllWindows()
 
     # --- internals -----------------------------------------------------------
 

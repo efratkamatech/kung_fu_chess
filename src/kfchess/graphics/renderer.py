@@ -13,12 +13,14 @@ pick each piece's sprite by its animation state (M3).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import Iterable, Optional, Union
 
 from kfchess.config import STATE_IDLE
+from kfchess.engine.arbiter import MovingPiece
 from kfchess.graphics.assets import SpriteBank, piece_token
 from kfchess.graphics.img import Img
 from kfchess.model.board import Board
+from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
 
 PathLike = Union[str, Path]
@@ -35,16 +37,30 @@ class BoardRenderer:
         self._cell_px = cell_px
         self._background: Optional[Img] = None  # loaded+scaled once, then copied
 
-    def render(self, board: Board) -> Img:
-        """A freshly drawn frame of ``board`` (background + every settled piece)."""
+    def render(
+        self, board: Board, moving_pieces: Iterable[MovingPiece] = ()
+    ) -> Img:
+        """A freshly drawn frame: background, settled pieces, then in-flight pieces.
+
+        A piece in flight still occupies its *origin* cell on the board (the core
+        keeps it there until it arrives), so settled drawing skips ``MOVING`` pieces
+        and they are drawn instead at their interpolated position from
+        ``moving_pieces`` — otherwise the same piece would appear twice.
+        """
         canvas = self._board_background(board).copy()
         for row in range(board.rows):
             for col in range(board.cols):
                 piece = board.piece_at(Position(row, col))
-                if piece is None:
+                if piece is None or piece.state is PieceState.MOVING:
                     continue
                 sprite = self._bank.sprite(piece_token(piece), STATE_IDLE)
                 sprite.draw_on(canvas, col * self._cell_px, row * self._cell_px)
+        for moving in moving_pieces:
+            sprite = self._bank.sprite(piece_token(moving.piece), STATE_IDLE)
+            row_f, col_f = moving.position  # fractional (row, col)
+            sprite.draw_on(
+                canvas, round(col_f * self._cell_px), round(row_f * self._cell_px)
+            )
         return canvas
 
     def _board_background(self, board: Board) -> Img:
