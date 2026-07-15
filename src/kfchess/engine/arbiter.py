@@ -140,10 +140,16 @@ class Jump:
 
 @dataclass(frozen=True)
 class Cooldown:
-    """A piece that just landed and is unavailable to move until ``ready_ms``."""
+    """A piece that just landed and is unavailable to move until ``ready_ms``.
+
+    ``started_ms`` and ``duration_ms`` let the graphics layer draw a gauge that drains
+    over the cooldown (a move and a jump landing use different durations).
+    """
 
     piece: Piece
     ready_ms: int
+    started_ms: int
+    duration_ms: int
 
 
 class RealTimeArbiter:
@@ -156,6 +162,7 @@ class RealTimeArbiter:
         promotion: Promotion,
         jump_duration_ms: int,
         cooldown_ms: int,
+        jump_cooldown_ms: int = 0,
         observers: Optional[Sequence[GameObserver]] = None,
     ) -> None:
         self._board = board
@@ -163,6 +170,7 @@ class RealTimeArbiter:
         self._promotion = promotion
         self._jump_duration_ms = jump_duration_ms
         self._cooldown_ms = cooldown_ms
+        self._jump_cooldown_ms = jump_cooldown_ms
         # Shared with the GameEngine so captures (here) and move-starts (there) reach
         # the same listeners. Empty by default, so the text path emits to no one.
         self._observers = observers if observers is not None else []
@@ -177,6 +185,20 @@ class RealTimeArbiter:
     def is_game_over(self) -> bool:
         """True once a king has been captured (the game has ended)."""
         return self._game_over
+
+    def cooldown_progress(self, now_ms: int) -> Dict[Piece, float]:
+        """Each cooling piece mapped to its *remaining* cooldown fraction (1.0 -> 0.0).
+
+        A rendering aid for the draining cooldown gauge; pieces with no (zero-length)
+        cooldown are omitted.
+        """
+        progress: Dict[Piece, float] = {}
+        for cooldown in self._cooldowns:
+            if cooldown.duration_ms <= 0:
+                continue
+            remaining = (cooldown.ready_ms - now_ms) / cooldown.duration_ms
+            progress[cooldown.piece] = max(0.0, min(1.0, remaining))
+        return progress
 
     def _notify_capture(self, victim: Piece) -> None:
         """Tell observers a piece was captured, and end the game if it was a king."""
@@ -249,7 +271,7 @@ class RealTimeArbiter:
                 self._board.remove(motion.source)
                 captured.add(motion.piece)
                 self._notify_capture(motion.piece)
-                self._land(defender)
+                self._land(defender, now_ms)
                 continue
 
             self._board.remove(motion.source)
@@ -260,14 +282,14 @@ class RealTimeArbiter:
                 stop_cell = self._cell_before(motion, motion.target)
                 self._board.place(stop_cell, motion.piece)
                 self._settle_ms[stop_cell] = now_ms
-                self._begin_cooldown(motion.piece, now_ms)
+                self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
                 continue
             if occupant is not None:
                 captured.add(occupant)  # this piece is taken; cancel its motion below
                 self._notify_capture(occupant)  # ends the game too if it was a king
             self._board.place(motion.target, motion.piece)
             self._settle_ms[motion.target] = now_ms
-            self._begin_cooldown(motion.piece, now_ms)
+            self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
             self._promotion.apply(motion.piece, motion.target, self._board)
 
         # Keep only motions still in flight whose piece was not captured.
@@ -280,7 +302,7 @@ class RealTimeArbiter:
         # Land any jumps whose airborne window has ended (with nothing to capture).
         for jump in list(self._jumps):
             if jump.end_ms <= now_ms:
-                self._land(jump.piece)
+                self._land(jump.piece, now_ms)
 
         # Free any pieces whose landing cooldown has now elapsed, and forget any
         # cooling piece that was captured in the meantime.
@@ -435,7 +457,7 @@ class RealTimeArbiter:
         self._board.remove(blocked.source)
         self._board.place(stop_cell, blocked.piece)
         self._settle_ms[stop_cell] = at_ms
-        self._begin_cooldown(blocked.piece, at_ms)
+        self._begin_cooldown(blocked.piece, at_ms, self._cooldown_ms)
         self._motions = [m for m in self._motions if m is not blocked]
 
     @staticmethod
@@ -461,17 +483,20 @@ class RealTimeArbiter:
                 return jump.piece
         return None
 
-    def _begin_cooldown(self, piece: Piece, now_ms: int) -> None:
-        """Put a just-landed piece on cooldown until ``now_ms + cooldown_ms``.
+    def _begin_cooldown(self, piece: Piece, now_ms: int, duration_ms: int) -> None:
+        """Put a just-landed piece on cooldown for ``duration_ms``.
 
         The piece is marked ``COOLDOWN`` and freed back to ``IDLE`` by ``resolve``
-        once the cooldown elapses. With ``cooldown_ms == 0`` the ready time equals
+        once the cooldown elapses. With ``duration_ms == 0`` the ready time equals
         ``now_ms``, so ``resolve`` frees it in the same pass — i.e. no cooldown.
         """
         piece.state = PieceState.COOLDOWN
-        self._cooldowns.append(Cooldown(piece, now_ms + self._cooldown_ms))
+        self._cooldowns.append(
+            Cooldown(piece, now_ms + duration_ms, now_ms, duration_ms)
+        )
 
-    def _land(self, piece: Piece) -> None:
-        """Return a jumping piece to rest, in place, and drop its jump."""
-        piece.state = PieceState.IDLE
+    def _land(self, piece: Piece, now_ms: int) -> None:
+        """Land a jumping piece in place, dropping its jump and starting its (short)
+        jump cooldown before it can act again."""
         self._jumps = [j for j in self._jumps if j.piece is not piece]
+        self._begin_cooldown(piece, now_ms, self._jump_cooldown_ms)

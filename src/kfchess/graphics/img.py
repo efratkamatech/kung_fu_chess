@@ -178,6 +178,30 @@ class Img:
         )
         return self
 
+    def fill_rect(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        color: Color,
+        alpha: float = 1.0,
+    ) -> "Img":
+        """Blend a filled rectangle over the image (``alpha`` 0..1), clipped to bounds.
+
+        Used for the translucent cooldown gauge so the piece shows through the fill.
+        """
+        dst = self._require()
+        dst_h, dst_w = dst.shape[:2]
+        x0, y0 = max(0, int(x)), max(0, int(y))
+        x1, y1 = min(dst_w, int(x + width)), min(dst_h, int(y + height))
+        if x0 >= x1 or y0 >= y1:
+            return self
+        region = dst[y0:y1, x0:x1, :3].astype(np.float32)
+        fill = np.array(_fit_color(color, 3), dtype=np.float32)
+        dst[y0:y1, x0:x1, :3] = (region * (1.0 - alpha) + fill * alpha).astype(np.uint8)
+        return self
+
     def put_text(
         self,
         text: str,

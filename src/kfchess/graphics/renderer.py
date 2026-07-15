@@ -13,9 +13,15 @@ pick each piece's sprite by its animation state (M3).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Dict, Iterable, Optional, Union
 
-from kfchess.config import PANEL_BG, SELECT_COLOR
+from kfchess.config import (
+    COOLDOWN_ALPHA,
+    COOLDOWN_COLOR,
+    PANEL_BG,
+    SELECT_COLOR,
+    STATE_IDLE,
+)
 from kfchess.engine.arbiter import MovingPiece
 from kfchess.graphics.assets import AnimationBank, piece_token
 from kfchess.graphics.hud import Hud
@@ -56,6 +62,7 @@ class BoardRenderer:
         moving_pieces: Iterable[MovingPiece] = (),
         now_ms: int = 0,
         selected: Optional[Position] = None,
+        cooldowns: Optional[Dict[Piece, float]] = None,
     ) -> Img:
         """A freshly drawn frame: background, settled pieces, in-flight pieces, highlight.
 
@@ -72,8 +79,11 @@ class BoardRenderer:
                 piece = board.piece_at(Position(row, col))
                 if piece is None or piece.state is PieceState.MOVING:
                     continue
-                frame = self._piece_frame(piece, now_ms)
+                state, elapsed_ms = self._piece_view.state_and_elapsed(piece, now_ms)
+                frame = self._animation_frame(piece, state, elapsed_ms)
                 frame.draw_on(canvas, col * self._cell_px, row * self._cell_px)
+                if piece.state is PieceState.COOLDOWN and cooldowns:
+                    self._draw_cooldown(canvas, row, col, cooldowns.get(piece, 0.0))
         for moving in moving_pieces:
             frame = self._piece_frame(moving.piece, now_ms)
             row_f, col_f = moving.position  # fractional (row, col)
@@ -109,7 +119,27 @@ class BoardRenderer:
     def _piece_frame(self, piece: Piece, now_ms: int) -> Img:
         """The animation frame to draw for ``piece`` right now (by its state + timing)."""
         state, elapsed_ms = self._piece_view.state_and_elapsed(piece, now_ms)
+        return self._animation_frame(piece, state, elapsed_ms)
+
+    def _animation_frame(self, piece: Piece, state: str, elapsed_ms: int) -> Img:
+        """Pick the frame for ``piece`` in ``state``; idle is a still pose (frame 0)."""
+        if state == STATE_IDLE:
+            elapsed_ms = 0  # idle should not move — hold the first frame
         return self._bank.animation(piece_token(piece), state).frame_at(elapsed_ms)
+
+    def _draw_cooldown(self, canvas: Img, row: int, col: int, remaining: float) -> None:
+        """Draw the draining yellow cooldown gauge over a just-moved piece's cell.
+
+        ``remaining`` is the cooldown's remaining fraction (1.0 -> 0.0). The fill's
+        height tracks it, anchored at the bottom of the cell, so its top edge descends
+        as the cooldown runs out.
+        """
+        if remaining <= 0.0:
+            return
+        height = int(remaining * self._cell_px)
+        x = col * self._cell_px
+        y = row * self._cell_px + (self._cell_px - height)
+        canvas.fill_rect(x, y, self._cell_px, height, COOLDOWN_COLOR, COOLDOWN_ALPHA)
 
     def _board_background(self, board: Board) -> Img:
         """The board image scaled to the board's pixel size, loaded once and cached.

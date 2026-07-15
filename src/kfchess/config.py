@@ -36,8 +36,10 @@ CELL_PX = 100
 # A move takes this long per cell of travel: a move of `distance` cells arrives
 # `distance * MS_PER_CELL` ms after it starts (so a 2-cell move takes 2000 ms).
 MS_PER_CELL = 1000
-# A jump keeps a piece airborne in place for this long.
-JUMP_DURATION_MS = 1000
+# A jump keeps a piece airborne in place for this long, then a short cooldown
+# follows before the piece can move again.
+JUMP_DURATION_MS = 2000
+JUMP_COOLDOWN_MS = 400
 # After a piece lands from a move it is on cooldown for this long: it cannot start
 # a new move until the cooldown elapses. Set to 0 to disable cooldown entirely.
 COOLDOWN_MS = 1000
@@ -96,6 +98,11 @@ FPS_DEFAULT = 8
 
 # Colour (B, G, R) of the outline drawn around the currently selected cell.
 SELECT_COLOR = (0, 255, 0)
+
+# Cooldown gauge: a translucent yellow fill over a just-moved piece's cell that
+# drains downward as its cooldown elapses.
+COOLDOWN_COLOR = (0, 255, 255)   # yellow (B, G, R)
+COOLDOWN_ALPHA = 0.45            # 0 = invisible, 1 = opaque
 
 # --- HUD (the side panel with names, score, and the moves log) ---------------
 PANEL_PX = 340                     # width in pixels of the side panel

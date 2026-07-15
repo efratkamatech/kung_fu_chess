@@ -66,6 +66,10 @@ class GameEngine:
         """
         return self._arbiter.moving_pieces(self._clock.now_ms)
 
+    def cooldown_progress(self):
+        """Each cooling piece mapped to its remaining cooldown fraction (for the gauge)."""
+        return self._arbiter.cooldown_progress(self._clock.now_ms)
+
     def request_move(self, source: Position, target: Position) -> None:
         """Start moving the piece at ``source`` to ``target`` if the move is legal.
 

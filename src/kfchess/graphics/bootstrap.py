@@ -48,5 +48,5 @@ def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
     # The mouse maps to the full canvas (board + panel); clicks in the panel fall off
     # the board and the Controller ignores them.
     canvas_size = (board_px + PANEL_PX, board.rows * CELL_PX)
-    mouse = MouseInput(controller, window_name, canvas_size)
+    mouse = MouseInput(controller, window_name, canvas_size, CELL_PX)
     return GraphicsApp(engine, controller, renderer, mouse, window_name)

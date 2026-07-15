@@ -18,6 +18,7 @@ from typing import Tuple
 
 from kfchess.control.controller import Controller
 from kfchess.graphics.img import Img
+from kfchess.model.position import Position
 
 
 def window_to_board(
@@ -40,21 +41,33 @@ class MouseInput:
     """Registers a mouse callback and routes clicks to the Controller in board pixels."""
 
     def __init__(
-        self, controller: Controller, window_name: str, board_size: Tuple[int, int]
+        self,
+        controller: Controller,
+        window_name: str,
+        board_size: Tuple[int, int],
+        cell_px: int,
     ) -> None:
         self._controller = controller
         self._window_name = window_name
         self._board_size = board_size  # (width, height) of the rendered board
+        self._cell_px = cell_px
 
     def install(self) -> None:
         """Attach the callback to the window (the window must already exist)."""
         Img.set_mouse_callback(self._window_name, self._on_mouse)
 
     def _on_mouse(self, event: int, x: int, y: int, flags: int, param) -> None:
-        """cv2 mouse callback: left click selects/moves, right click jumps."""
+        """cv2 mouse callback: left click selects/moves (or jumps a re-clicked piece),
+        right click jumps."""
         if event == Img.MOUSE_LEFT_DOWN:
             board_x, board_y = self._to_board(x, y)
-            self._controller.click(board_x, board_y)
+            cell = Position(board_y // self._cell_px, board_x // self._cell_px)
+            if self._controller.selected_cell == cell:
+                # Clicking the already-selected piece again means "jump in place".
+                self._controller.jump(board_x, board_y)
+                self._controller.deselect()
+            else:
+                self._controller.click(board_x, board_y)
         elif event == Img.MOUSE_RIGHT_DOWN:
             board_x, board_y = self._to_board(x, y)
             self._controller.jump(board_x, board_y)

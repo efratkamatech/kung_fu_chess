@@ -90,6 +90,10 @@ class Controller:
         self._selected = None
         self._selected_piece = None
 
+    def deselect(self) -> None:
+        """Public: drop the current selection (used by the GUI after a jump)."""
+        self._clear_selection()
+
     def jump(self, x: int, y: int) -> None:
         """Make the piece on the clicked cell jump in place (off-board is ignored)."""
         position = self._pixel_to_cell(x, y)

@@ -69,6 +69,7 @@ class GraphicsApp:
                 self._engine.moving_pieces(),
                 self._engine.now_ms,
                 self._controller.selected_cell,
+                self._engine.cooldown_progress(),
             )
             key = frame.show(self._window_name, self._frame_delay_ms)
 
