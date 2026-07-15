@@ -93,3 +93,6 @@ STATE_LONG_REST = "long_rest"
 
 # Fallback animation frame rate if a state's config.json omits ``frames_per_sec``.
 FPS_DEFAULT = 8
+
+# Colour (B, G, R) of the outline drawn around the currently selected cell.
+SELECT_COLOR = (0, 255, 0)

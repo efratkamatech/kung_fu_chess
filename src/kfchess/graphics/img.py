@@ -159,6 +159,25 @@ class Img:
             dst_region[:, :, :3] = src_region[:, :, :3]
         return target
 
+    def draw_rect(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        color: Color = (0, 255, 0),
+        thickness: int = 3,
+    ) -> "Img":
+        """Draw a rectangle outline with its top-left at ``(x, y)`` (for highlights)."""
+        cv2.rectangle(
+            self._require(),
+            (int(x), int(y)),
+            (int(x + width), int(y + height)),
+            _fit_color(color, self.channels),
+            thickness,
+        )
+        return self
+
     def put_text(
         self,
         text: str,
@@ -216,6 +235,38 @@ class Img:
     def destroy_windows() -> None:
         """Close every OpenCV window (called once when the frame loop ends)."""
         cv2.destroyAllWindows()
+
+    # --- window / mouse input (cv2 kept encapsulated here) -------------------
+
+    # Mouse-event codes the input layer compares against, re-exported so no other
+    # module has to import cv2.
+    MOUSE_LEFT_DOWN = cv2.EVENT_LBUTTONDOWN
+    MOUSE_RIGHT_DOWN = cv2.EVENT_RBUTTONDOWN
+
+    @staticmethod
+    def create_window(window_name: str, resizable: bool = True) -> None:
+        """Create a named window ahead of showing frames.
+
+        A ``resizable`` window (``WINDOW_NORMAL``) lets the user drag it to any size —
+        which is why clicks must be scaled from window pixels back to board pixels.
+        """
+        flag = cv2.WINDOW_NORMAL if resizable else cv2.WINDOW_AUTOSIZE
+        cv2.namedWindow(window_name, flag)
+
+    @staticmethod
+    def set_mouse_callback(window_name: str, callback) -> None:
+        """Register ``callback(event, x, y, flags, param)`` for mouse events on a window."""
+        cv2.setMouseCallback(window_name, callback)
+
+    @staticmethod
+    def window_image_size(window_name: str) -> Tuple[int, int]:
+        """The current on-screen size ``(width, height)`` of the window's image area.
+
+        Used to scale mouse coordinates: when the window is resized this differs from
+        the board's pixel size. Returns ``(0, 0)`` if the window has no size yet.
+        """
+        _x, _y, width, height = cv2.getWindowImageRect(window_name)
+        return max(0, width), max(0, height)
 
     # --- internals -----------------------------------------------------------
 

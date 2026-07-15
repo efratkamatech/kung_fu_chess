@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
+from kfchess.config import SELECT_COLOR
 from kfchess.engine.arbiter import MovingPiece
 from kfchess.graphics.assets import AnimationBank, piece_token
 from kfchess.graphics.img import Img
@@ -45,15 +46,20 @@ class BoardRenderer:
         self._background: Optional[Img] = None  # loaded+scaled once, then copied
 
     def render(
-        self, board: Board, moving_pieces: Iterable[MovingPiece] = (), now_ms: int = 0
+        self,
+        board: Board,
+        moving_pieces: Iterable[MovingPiece] = (),
+        now_ms: int = 0,
+        selected: Optional[Position] = None,
     ) -> Img:
-        """A freshly drawn frame: background, settled pieces, then in-flight pieces.
+        """A freshly drawn frame: background, settled pieces, in-flight pieces, highlight.
 
         Each piece is drawn with the animation frame for its current state at
         ``now_ms``. A piece in flight still occupies its *origin* cell on the board
         (the core keeps it there until it arrives), so settled drawing skips
         ``MOVING`` pieces and they are drawn instead at their interpolated position
-        from ``moving_pieces`` — otherwise the same piece would appear twice.
+        from ``moving_pieces`` — otherwise the same piece would appear twice. If
+        ``selected`` is given, its cell is outlined last so it sits on top.
         """
         canvas = self._board_background(board).copy()
         for row in range(board.rows):
@@ -68,6 +74,14 @@ class BoardRenderer:
             row_f, col_f = moving.position  # fractional (row, col)
             frame.draw_on(
                 canvas, round(col_f * self._cell_px), round(row_f * self._cell_px)
+            )
+        if selected is not None:
+            canvas.draw_rect(
+                selected.col * self._cell_px,
+                selected.row * self._cell_px,
+                self._cell_px,
+                self._cell_px,
+                SELECT_COLOR,
             )
         return canvas
 

@@ -41,6 +41,11 @@ class Controller:
         self._selected: Optional[Position] = None
         self._selected_piece: Optional[Piece] = None
 
+    @property
+    def selected_cell(self) -> Optional[Position]:
+        """The currently selected cell, or ``None`` — read by the renderer to highlight it."""
+        return self._selected
+
     def click(self, x: int, y: int) -> None:
         board = self._engine.board
         position = self._pixel_to_cell(x, y)
