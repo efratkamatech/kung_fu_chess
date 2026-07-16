@@ -12,7 +12,7 @@ clicks, or the text format (those belong to the Controller and Text I/O layers).
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
 from kfchess.engine.arbiter import MovingPiece, RealTimeArbiter
 from kfchess.engine.clock import Clock

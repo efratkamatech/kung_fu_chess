@@ -1,7 +1,7 @@
 from kfchess.graphics.events import MovesLog, ScoreBoard
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
-from kfchess.model.piece_type import PieceType, standard_piece_types
+from kfchess.model.piece_type import standard_piece_types
 from kfchess.model.position import Position
 
 
