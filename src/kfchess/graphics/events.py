@@ -18,26 +18,30 @@ from kfchess.model.position import Position
 
 
 class MovesLog(GameObserver):
-    """Records a human-readable line per move started and per capture."""
+    """Records a human-readable line per move/capture, kept separately per side.
+
+    A move is logged to the mover's side; a capture is logged to the *captor's* side
+    (the victim's opponent), so each player's panel shows their own moves and kills.
+    """
 
     def __init__(self, board_rows: int) -> None:
         # Board height, so a row index becomes a chess-style rank (bottom row = 1).
         self._board_rows = board_rows
-        self._entries: List[str] = []
+        self._by_color: Dict[Color, List[str]] = {Color.WHITE: [], Color.BLACK: []}
 
     def on_move_started(
         self, piece: Piece, source: Position, target: Position
     ) -> None:
-        self._entries.append(
+        self._by_color[piece.color].append(
             f"{piece_token(piece)} {self._square(source)} -> {self._square(target)}"
         )
 
     def on_capture(self, victim: Piece) -> None:
-        self._entries.append(f"x {piece_token(victim)}")
+        self._by_color[victim.color.opponent].append(f"x {piece_token(victim)}")
 
-    def recent(self, count: int) -> List[str]:
-        """The most recent ``count`` log lines (oldest first)."""
-        return self._entries[-count:]
+    def recent(self, color: Color, count: int) -> List[str]:
+        """The most recent ``count`` log lines for ``color`` (oldest first)."""
+        return self._by_color[color][-count:]
 
     def _square(self, position: Position) -> str:
         """Chess-style square name, e.g. ``e2`` (file a.. from col, rank 1.. from bottom)."""

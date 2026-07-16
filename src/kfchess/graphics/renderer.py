@@ -47,8 +47,9 @@ class BoardRenderer:
         animation_bank: AnimationBank,
         cell_px: int,
         piece_view: Optional[PieceView] = None,
-        hud: Optional[Hud] = None,
-        panel_px: int = 0,
+        huds: Iterable[Hud] = (),
+        left_panel_px: int = 0,
+        right_panel_px: int = 0,
     ) -> None:
         self._board_image_path = Path(board_image_path)
         self._bank = animation_bank
@@ -56,8 +57,9 @@ class BoardRenderer:
         # One PieceView for the whole game: it must remember per-piece animation
         # timing across frames, so it is created once here, not per render call.
         self._piece_view = piece_view or PieceView()
-        self._hud = hud
-        self._panel_px = panel_px  # width of the HUD panel to the right (0 = no panel)
+        self._huds = tuple(huds)  # one panel per player (drawn at their own x)
+        self._left_px = left_panel_px  # left panel width = the board's x offset
+        self._right_px = right_panel_px
         self._background: Optional[Img] = None  # loaded+scaled once, then copied
 
     def render(
@@ -85,46 +87,58 @@ class BoardRenderer:
                     continue
                 state, elapsed_ms = self._piece_view.state_and_elapsed(piece, now_ms)
                 frame = self._animation_frame(piece, state, elapsed_ms)
-                frame.draw_on(canvas, col * self._cell_px, row * self._cell_px)
+                frame.draw_on(canvas, self._cell_x(col), self._cell_y(row))
                 if piece.state is PieceState.COOLDOWN and cooldowns:
                     self._draw_cooldown(canvas, row, col, cooldowns.get(piece, 0.0))
         for moving in moving_pieces:
             frame = self._piece_frame(moving.piece, now_ms)
             row_f, col_f = moving.position  # fractional (row, col)
             frame.draw_on(
-                canvas, round(col_f * self._cell_px), round(row_f * self._cell_px)
+                canvas,
+                round(col_f * self._cell_px) + self._left_px,
+                round(row_f * self._cell_px),
             )
         if selected is not None:
             canvas.draw_rect(
-                selected.col * self._cell_px,
-                selected.row * self._cell_px,
+                self._cell_x(selected.col),
+                self._cell_y(selected.row),
                 self._cell_px,
                 self._cell_px,
                 SELECT_COLOR,
             )
-        if self._hud is not None:
-            self._hud.draw(canvas)
+        for hud in self._huds:
+            hud.draw(canvas)
         return canvas
 
     def draw_game_over(self, canvas: Img, title: str, subtitle: str) -> None:
         """Dim the board area and centre a game-over ``title`` + ``subtitle`` on it."""
-        board_w = canvas.width - self._panel_px
-        canvas.fill_rect(0, 0, board_w, canvas.height, GAMEOVER_BG, GAMEOVER_ALPHA)
-        center_x = board_w // 2
+        board_w = canvas.width - self._left_px - self._right_px
+        canvas.fill_rect(self._left_px, 0, board_w, canvas.height, GAMEOVER_BG, GAMEOVER_ALPHA)
+        center_x = self._left_px + board_w // 2
         middle_y = canvas.height // 2
         canvas.put_text_centered(title, center_x, middle_y, 1.6, GAMEOVER_TEXT_COLOR, 3)
         canvas.put_text_centered(
             subtitle, center_x, middle_y + 60, 0.7, GAMEOVER_TEXT_COLOR, 2
         )
 
+    def _cell_x(self, col: int) -> int:
+        """Left pixel of board column ``col`` on the canvas (past the left panel)."""
+        return col * self._cell_px + self._left_px
+
+    def _cell_y(self, row: int) -> int:
+        """Top pixel of board row ``row`` on the canvas."""
+        return row * self._cell_px
+
     def _new_canvas(self, board: Board) -> Img:
-        """A fresh frame canvas: the board background, plus a blank HUD panel if any."""
+        """A fresh frame canvas: side panels (if any) with the board between them."""
         board_bg = self._board_background(board)
-        if self._panel_px <= 0:
+        if self._left_px <= 0 and self._right_px <= 0:
             return board_bg.copy()
         board_w, board_h = board_pixel_size(board, self._cell_px)
-        canvas = Img.blank(board_w + self._panel_px, board_h, channels=3, color=PANEL_BG)
-        board_bg.draw_on(canvas, 0, 0)
+        canvas = Img.blank(
+            self._left_px + board_w + self._right_px, board_h, channels=3, color=PANEL_BG
+        )
+        board_bg.draw_on(canvas, self._left_px, 0)
         return canvas
 
     def _piece_frame(self, piece: Piece, now_ms: int) -> Img:
@@ -148,8 +162,8 @@ class BoardRenderer:
         if remaining <= 0.0:
             return
         height = int(remaining * self._cell_px)
-        x = col * self._cell_px
-        y = row * self._cell_px + (self._cell_px - height)
+        x = self._cell_x(col)
+        y = self._cell_y(row) + (self._cell_px - height)
         canvas.fill_rect(x, y, self._cell_px, height, COOLDOWN_COLOR, COOLDOWN_ALPHA)
 
     def _board_background(self, board: Board) -> Img:

@@ -26,6 +26,7 @@ from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.input import MouseInput
 from kfchess.graphics.renderer import BoardRenderer
+from kfchess.model.color import Color
 
 
 def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
@@ -40,14 +41,25 @@ def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
     engine.add_observer(moves_log)
     engine.add_observer(score_board)
 
+    # Two side panels: black on the left, white on the right, board in the middle.
     board_w, board_h = board_pixel_size(board, CELL_PX)
-    hud = Hud(moves_log, score_board, WHITE_PLAYER_NAME, BLACK_PLAYER_NAME, board_w)
+    black_hud = Hud(BLACK_PLAYER_NAME, Color.BLACK, moves_log, score_board, left_x=20)
+    white_hud = Hud(
+        WHITE_PLAYER_NAME, Color.WHITE, moves_log, score_board,
+        left_x=PANEL_PX + board_w + 20,
+    )
     renderer = BoardRenderer(
-        BOARD_IMAGE, AnimationBank(PIECES_DIR, CELL_PX), CELL_PX, hud=hud, panel_px=PANEL_PX
+        BOARD_IMAGE,
+        AnimationBank(PIECES_DIR, CELL_PX),
+        CELL_PX,
+        huds=(black_hud, white_hud),
+        left_panel_px=PANEL_PX,
+        right_panel_px=PANEL_PX,
     )
 
-    # The mouse maps to the full canvas (board + panel); clicks in the panel fall off
-    # the board and the Controller ignores them.
-    canvas_size = (board_w + PANEL_PX, board_h)
-    mouse = MouseInput(controller, window_name, canvas_size)
+    # The mouse maps to the full canvas (left panel + board + right panel); the board
+    # sits PANEL_PX from the left, so clicks are shifted by that offset and panel
+    # clicks fall off the board (the Controller ignores them).
+    canvas_size = (PANEL_PX + board_w + PANEL_PX, board_h)
+    mouse = MouseInput(controller, window_name, canvas_size, board_x_offset=PANEL_PX)
     return GraphicsApp(engine, controller, renderer, mouse, window_name)

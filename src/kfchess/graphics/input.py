@@ -40,11 +40,16 @@ class MouseInput:
     """Registers a mouse callback and routes clicks to the Controller in board pixels."""
 
     def __init__(
-        self, controller: Controller, window_name: str, board_size: Tuple[int, int]
+        self,
+        controller: Controller,
+        window_name: str,
+        canvas_size: Tuple[int, int],
+        board_x_offset: int = 0,
     ) -> None:
         self._controller = controller
         self._window_name = window_name
-        self._board_size = board_size  # (width, height) of the rendered board
+        self._canvas_size = canvas_size  # (width, height) of the whole rendered canvas
+        self._board_x_offset = board_x_offset  # left panel width to subtract off clicks
 
     def install(self) -> None:
         """Attach the callback to the window (the window must already exist)."""
@@ -67,4 +72,7 @@ class MouseInput:
 
     def _to_board(self, x: int, y: int) -> Tuple[int, int]:
         window_size = Img.window_image_size(self._window_name)
-        return window_to_board(x, y, window_size, self._board_size)
+        canvas_x, canvas_y = window_to_board(x, y, window_size, self._canvas_size)
+        # Shift into board-local pixels; a click in a side panel lands off the board
+        # (negative or past the last column), which the Controller ignores.
+        return canvas_x - self._board_x_offset, canvas_y
