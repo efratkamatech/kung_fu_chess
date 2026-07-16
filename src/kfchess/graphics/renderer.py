@@ -21,6 +21,9 @@ from kfchess.config import (
     GAMEOVER_ALPHA,
     GAMEOVER_BG,
     GAMEOVER_TEXT_COLOR,
+    INVALID_MOVE_COLOR,
+    LEGAL_MOVE_ALPHA,
+    LEGAL_MOVE_COLOR,
     PANEL_BG,
     SELECT_COLOR,
     STATE_IDLE,
@@ -69,17 +72,21 @@ class BoardRenderer:
         now_ms: int = 0,
         selected: Optional[Position] = None,
         cooldowns: Optional[Dict[Piece, float]] = None,
+        legal_targets: Iterable[Position] = (),
+        invalid_cell: Optional[Position] = None,
     ) -> Img:
-        """A freshly drawn frame: background, settled pieces, in-flight pieces, highlight.
+        """A freshly drawn frame: background, move hints, pieces, and overlays.
 
         Each piece is drawn with the animation frame for its current state at
         ``now_ms``. A piece in flight still occupies its *origin* cell on the board
         (the core keeps it there until it arrives), so settled drawing skips
         ``MOVING`` pieces and they are drawn instead at their interpolated position
-        from ``moving_pieces`` — otherwise the same piece would appear twice. If
-        ``selected`` is given, its cell is outlined last so it sits on top.
+        from ``moving_pieces``. ``legal_targets`` are tinted green under the pieces;
+        ``selected`` is outlined green and ``invalid_cell`` outlined red, on top.
         """
         canvas = self._new_canvas(board)
+        for cell in legal_targets:  # green hints go under the pieces
+            self._fill_cell(canvas, cell, LEGAL_MOVE_COLOR, LEGAL_MOVE_ALPHA)
         for row in range(board.rows):
             for col in range(board.cols):
                 piece = board.piece_at(Position(row, col))
@@ -106,9 +113,24 @@ class BoardRenderer:
                 self._cell_px,
                 SELECT_COLOR,
             )
+        if invalid_cell is not None:
+            canvas.draw_rect(
+                self._cell_x(invalid_cell.col),
+                self._cell_y(invalid_cell.row),
+                self._cell_px,
+                self._cell_px,
+                INVALID_MOVE_COLOR,
+            )
         for hud in self._huds:
             hud.draw(canvas)
         return canvas
+
+    def _fill_cell(self, canvas: Img, cell: Position, color, alpha: float) -> None:
+        """Blend a translucent ``color`` over the whole of ``cell`` (a move hint)."""
+        canvas.fill_rect(
+            self._cell_x(cell.col), self._cell_y(cell.row), self._cell_px, self._cell_px,
+            color, alpha,
+        )
 
     def draw_game_over(self, canvas: Img, title: str, subtitle: str) -> None:
         """Dim the board area and centre a game-over ``title`` + ``subtitle`` on it."""

@@ -80,20 +80,35 @@ class GameEngine:
         """The winning Color, or ``None`` while the game is still in progress."""
         return self._arbiter.winner
 
-    def request_move(self, source: Position, target: Position) -> None:
+    def request_move(self, source: Position, target: Position) -> bool:
         """Start moving the piece at ``source`` to ``target`` if the move is legal.
 
-        Illegal moves are ignored. Legal ones begin a timed motion; the piece does
-        not appear at the destination until enough time has passed.
+        Returns ``True`` if a legal move was started, ``False`` if it was rejected
+        (game over or an illegal move). A legal move begins a timed motion; the piece
+        does not appear at the destination until enough time has passed.
         """
         if self._arbiter.is_game_over:
-            return
+            return False
         if not self._rule_engine.is_legal_move(self._board, source, target):
-            return
+            return False
         piece = self._board.piece_at(source)
         self._arbiter.start_motion(piece, source, target, self._clock.now_ms)
         for observer in self._observers:
             observer.on_move_started(piece, source, target)
+        return True
+
+    def legal_targets(self, source: Position) -> List[Position]:
+        """Every cell the piece at ``source`` may legally move to right now.
+
+        A rendering aid for highlighting moves; empty if the cell holds no piece or
+        the piece cannot move (e.g. it is mid-move or on cooldown).
+        """
+        return [
+            Position(row, col)
+            for row in range(self._board.rows)
+            for col in range(self._board.cols)
+            if self._rule_engine.is_legal_move(self._board, source, Position(row, col))
+        ]
 
     def request_jump(self, cell: Position) -> None:
         """Make the piece on ``cell`` jump in place, if it can.

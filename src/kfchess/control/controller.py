@@ -23,12 +23,22 @@ it is gone, the selection is dropped and the click is treated as a fresh first c
 
 from __future__ import annotations
 
+from enum import Enum, auto
 from typing import Optional
 
 from kfchess.config import CELL_PX
 from kfchess.engine.game_engine import GameEngine
 from kfchess.model.piece import Piece
 from kfchess.model.position import Position
+
+
+class ClickOutcome(Enum):
+    """What a click did — so the GUI can react (e.g. flash red on an illegal move)."""
+
+    IGNORED = auto()   # off-board, or an empty cell with nothing selected
+    SELECTED = auto()  # selected or switched to a piece
+    MOVED = auto()     # started a legal move
+    ILLEGAL = auto()   # tried to move a selected piece to a cell it cannot reach
 
 
 class Controller:
@@ -46,11 +56,11 @@ class Controller:
         """The currently selected cell, or ``None`` — read by the renderer to highlight it."""
         return self._selected
 
-    def click(self, x: int, y: int) -> None:
+    def click(self, x: int, y: int) -> ClickOutcome:
         board = self._engine.board
         position = self._pixel_to_cell(x, y)
         if not board.in_bounds(position):
-            return
+            return ClickOutcome.IGNORED
 
         target_piece = board.piece_at(position)
 
@@ -67,7 +77,8 @@ class Controller:
             # No live selection: only clicking a piece does anything (selects it).
             if target_piece is not None:
                 self._select(position, target_piece)
-            return
+                return ClickOutcome.SELECTED
+            return ClickOutcome.IGNORED
 
         # A live selection is held, and its piece is still on the selected cell.
         clicked_friendly = (
@@ -76,9 +87,11 @@ class Controller:
         )
         if clicked_friendly:
             self._select(position, target_piece)  # switch to the new friendly piece
-        else:
-            self._engine.request_move(self._selected, position)
-            self._clear_selection()
+            return ClickOutcome.SELECTED
+
+        moved = self._engine.request_move(self._selected, position)
+        self._clear_selection()
+        return ClickOutcome.MOVED if moved else ClickOutcome.ILLEGAL
 
     def _select(self, position: Position, piece: Piece) -> None:
         """Record ``piece`` at ``position`` as the current selection."""

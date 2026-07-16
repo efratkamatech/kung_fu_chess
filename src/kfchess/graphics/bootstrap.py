@@ -24,7 +24,7 @@ from kfchess.graphics.assets import AnimationBank, load_board_csv
 from kfchess.graphics.events import MovesLog, ScoreBoard
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
-from kfchess.graphics.input import MouseInput
+from kfchess.graphics.input import ClickFeedback, MouseInput
 from kfchess.graphics.renderer import BoardRenderer
 from kfchess.model.color import Color
 
@@ -61,5 +61,8 @@ def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
     # sits PANEL_PX from the left, so clicks are shifted by that offset and panel
     # clicks fall off the board (the Controller ignores them).
     canvas_size = (PANEL_PX + board_w + PANEL_PX, board_h)
-    mouse = MouseInput(controller, window_name, canvas_size, board_x_offset=PANEL_PX)
-    return GraphicsApp(engine, controller, renderer, mouse, window_name)
+    feedback = ClickFeedback()  # shared: the mouse writes the red flash, the loop reads it
+    mouse = MouseInput(
+        controller, window_name, canvas_size, board_x_offset=PANEL_PX, feedback=feedback
+    )
+    return GraphicsApp(engine, controller, renderer, mouse, feedback, window_name)

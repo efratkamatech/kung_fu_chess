@@ -99,6 +99,13 @@ FPS_DEFAULT = 8
 # Colour (B, G, R) of the outline drawn around the currently selected cell.
 SELECT_COLOR = (0, 255, 0)
 
+# Legal-move hints: a translucent green fill on each cell the selected piece may reach.
+LEGAL_MOVE_COLOR = (0, 220, 0)
+LEGAL_MOVE_ALPHA = 0.30
+# Illegal-target feedback: a red outline flashed on a cell the piece cannot reach.
+INVALID_MOVE_COLOR = (0, 0, 255)
+INVALID_FLASH_SECONDS = 0.4
+
 # Cooldown gauge: a translucent yellow fill over a just-moved piece's cell that
 # drains downward as its cooldown elapses.
 COOLDOWN_COLOR = (0, 255, 255)   # yellow (B, G, R)

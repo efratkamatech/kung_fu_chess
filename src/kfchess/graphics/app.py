@@ -21,7 +21,7 @@ import time
 from kfchess.control.controller import Controller
 from kfchess.engine.game_engine import GameEngine
 from kfchess.graphics.img import Img
-from kfchess.graphics.input import MouseInput
+from kfchess.graphics.input import ClickFeedback, MouseInput
 from kfchess.graphics.renderer import BoardRenderer
 
 _ESC_KEY = 27
@@ -37,6 +37,7 @@ class GraphicsApp:
         controller: Controller,
         renderer: BoardRenderer,
         mouse: MouseInput,
+        feedback: ClickFeedback,
         window_name: str = "KungFu Chess",
         frame_delay_ms: int = 16,
         max_dt_ms: int = 100,
@@ -45,6 +46,7 @@ class GraphicsApp:
         self._controller = controller
         self._renderer = renderer
         self._mouse = mouse
+        self._feedback = feedback
         self._window_name = window_name
         self._frame_delay_ms = frame_delay_ms  # ~16 ms -> ~60 fps cap
         self._max_dt_ms = max_dt_ms  # clamp so a long stall doesn't teleport pieces
@@ -66,12 +68,18 @@ class GraphicsApp:
             last = now
             self._engine.wait(min(dt_ms, self._max_dt_ms))
 
+            selected = self._controller.selected_cell
+            legal_targets = (
+                self._engine.legal_targets(selected) if selected is not None else ()
+            )
             frame = self._renderer.render(
                 self._engine.board,
                 self._engine.moving_pieces(),
                 self._engine.now_ms,
-                self._controller.selected_cell,
+                selected,
                 self._engine.cooldown_progress(),
+                legal_targets,
+                self._feedback.current(),
             )
             if self._engine.is_game_over:
                 self._renderer.draw_game_over(
