@@ -40,6 +40,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from kfchess.engine.events import GameObserver
 from kfchess.model.board import Board
+from kfchess.model.color import Color
 from kfchess.model.piece import Piece, PieceState
 from kfchess.model.position import Position
 from kfchess.rules.promotion import Promotion
@@ -180,11 +181,17 @@ class RealTimeArbiter:
         self._settle_ms: Dict[Position, int] = {}  # when the piece on a cell settled
         self._next_sequence = 0
         self._game_over = False
+        self._winner: Optional[Color] = None
 
     @property
     def is_game_over(self) -> bool:
         """True once a king has been captured (the game has ended)."""
         return self._game_over
+
+    @property
+    def winner(self) -> Optional[Color]:
+        """The side that won (captured the enemy king), or ``None`` if still playing."""
+        return self._winner
 
     def cooldown_progress(self, now_ms: int) -> Dict[Piece, float]:
         """Each cooling piece mapped to its *remaining* cooldown fraction (1.0 -> 0.0).
@@ -205,12 +212,13 @@ class RealTimeArbiter:
         for observer in self._observers:
             observer.on_capture(victim)
         if victim.piece_type.is_king:
-            self._end_game()
+            self._end_game(victim.color.opponent)
 
-    def _end_game(self) -> None:
-        """Mark the game over and notify observers once (idempotent)."""
+    def _end_game(self, winner: Color) -> None:
+        """Mark the game over (recording the winner) and notify observers once."""
         if not self._game_over:
             self._game_over = True
+            self._winner = winner
             for observer in self._observers:
                 observer.on_game_over()
 

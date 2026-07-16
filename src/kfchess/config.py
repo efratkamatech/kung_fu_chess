@@ -111,3 +111,8 @@ HUD_TEXT_COLOR = (235, 235, 235)   # default text colour
 HUD_MOVES_VISIBLE = 12             # how many recent moves the log shows
 WHITE_PLAYER_NAME = "White"
 BLACK_PLAYER_NAME = "Black"
+
+# --- Game-over banner --------------------------------------------------------
+GAMEOVER_BG = (0, 0, 0)            # dim overlay colour (B, G, R)
+GAMEOVER_ALPHA = 0.6              # overlay opacity
+GAMEOVER_TEXT_COLOR = (255, 255, 255)

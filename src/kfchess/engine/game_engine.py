@@ -70,6 +70,16 @@ class GameEngine:
         """Each cooling piece mapped to its remaining cooldown fraction (for the gauge)."""
         return self._arbiter.cooldown_progress(self._clock.now_ms)
 
+    @property
+    def is_game_over(self) -> bool:
+        """True once a king has been captured (the game has ended)."""
+        return self._arbiter.is_game_over
+
+    @property
+    def winner(self):
+        """The winning Color, or ``None`` while the game is still in progress."""
+        return self._arbiter.winner
+
     def request_move(self, source: Position, target: Position) -> None:
         """Start moving the piece at ``source`` to ``target`` if the move is legal.
 

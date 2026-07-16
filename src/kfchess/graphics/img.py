@@ -229,6 +229,22 @@ class Img:
         )
         return self
 
+    def put_text_centered(
+        self,
+        text: str,
+        center_x: int,
+        y: int,
+        font_scale: float = 1.0,
+        color: Color = (255, 255, 255, 255),
+        thickness: int = 2,
+        font: int = cv2.FONT_HERSHEY_SIMPLEX,
+    ) -> "Img":
+        """Draw ``text`` horizontally centred on ``center_x`` at baseline ``y``."""
+        (text_w, _text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+        return self.put_text(
+            text, int(center_x - text_w / 2), y, font_scale, color, thickness, font
+        )
+
     # --- output --------------------------------------------------------------
 
     def save(self, path: PathLike) -> "Img":

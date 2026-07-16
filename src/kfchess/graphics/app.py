@@ -25,6 +25,7 @@ from kfchess.graphics.input import MouseInput
 from kfchess.graphics.renderer import BoardRenderer
 
 _ESC_KEY = 27
+_NEW_GAME_KEYS = (ord("n"), ord("N"))
 
 
 class GraphicsApp:
@@ -53,8 +54,9 @@ class GraphicsApp:
         """The game engine (exposed for tests and one-off scripted moves)."""
         return self._engine
 
-    def run(self) -> None:
-        """Loop until the user presses ESC or closes the window."""
+    def run(self) -> bool:
+        """Run the game loop. Return ``True`` if the player asked for a new game,
+        ``False`` to quit (ESC or the window closed)."""
         Img.create_window(self._window_name, resizable=True)
         self._mouse.install()
         last = time.monotonic()
@@ -71,8 +73,20 @@ class GraphicsApp:
                 self._controller.selected_cell,
                 self._engine.cooldown_progress(),
             )
+            if self._engine.is_game_over:
+                self._renderer.draw_game_over(
+                    frame, self._winner_text(), "[N] New Game    [Esc] Quit"
+                )
             key = frame.show(self._window_name, self._frame_delay_ms)
 
+            if self._engine.is_game_over and key in _NEW_GAME_KEYS:
+                Img.destroy_windows()
+                return True
             if key == _ESC_KEY or Img.is_window_closed(self._window_name):
                 break
         Img.destroy_windows()
+        return False
+
+    def _winner_text(self) -> str:
+        winner = self._engine.winner
+        return f"{winner.name.title()} wins!" if winner is not None else "Game Over"
