@@ -29,7 +29,11 @@ from kfchess.graphics.renderer import BoardRenderer
 from kfchess.model.color import Color
 
 
-def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
+def build_graphics_app(
+    window_name: str = "KungFu Chess",
+    white_name: str = WHITE_PLAYER_NAME,
+    black_name: str = BLACK_PLAYER_NAME,
+) -> GraphicsApp:
     """Load assets, build the core game, wire input + observers, and return the app."""
     board = load_board_csv(BOARD_CSV)
     engine, controller = build_game(board)
@@ -43,9 +47,9 @@ def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
 
     # Two side panels: black on the left, white on the right, board in the middle.
     board_w, board_h = board_pixel_size(board, CELL_PX)
-    black_hud = Hud(BLACK_PLAYER_NAME, Color.BLACK, moves_log, score_board, left_x=20)
+    black_hud = Hud(black_name, Color.BLACK, moves_log, score_board, left_x=20)
     white_hud = Hud(
-        WHITE_PLAYER_NAME, Color.WHITE, moves_log, score_board,
+        white_name, Color.WHITE, moves_log, score_board,
         left_x=PANEL_PX + board_w + 20,
     )
     renderer = BoardRenderer(
@@ -65,4 +69,7 @@ def build_graphics_app(window_name: str = "KungFu Chess") -> GraphicsApp:
     mouse = MouseInput(
         controller, window_name, canvas_size, board_x_offset=PANEL_PX, feedback=feedback
     )
-    return GraphicsApp(engine, controller, renderer, mouse, feedback, window_name)
+    player_names = {Color.WHITE: white_name, Color.BLACK: black_name}
+    return GraphicsApp(
+        engine, controller, renderer, mouse, feedback, player_names, window_name
+    )

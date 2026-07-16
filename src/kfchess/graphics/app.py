@@ -38,6 +38,7 @@ class GraphicsApp:
         renderer: BoardRenderer,
         mouse: MouseInput,
         feedback: ClickFeedback,
+        player_names,
         window_name: str = "KungFu Chess",
         frame_delay_ms: int = 16,
         max_dt_ms: int = 100,
@@ -47,6 +48,7 @@ class GraphicsApp:
         self._renderer = renderer
         self._mouse = mouse
         self._feedback = feedback
+        self._player_names = player_names  # {Color: name} for the game-over banner
         self._window_name = window_name
         self._frame_delay_ms = frame_delay_ms  # ~16 ms -> ~60 fps cap
         self._max_dt_ms = max_dt_ms  # clamp so a long stall doesn't teleport pieces
@@ -97,4 +99,4 @@ class GraphicsApp:
 
     def _winner_text(self) -> str:
         winner = self._engine.winner
-        return f"{winner.name.title()} wins!" if winner is not None else "Game Over"
+        return f"{self._player_names[winner]} wins!" if winner is not None else "Game Over"
