@@ -94,6 +94,10 @@ class Controller:
         """Public: drop the current selection (used by the GUI after a jump)."""
         self._clear_selection()
 
+    def cell_at(self, x: int, y: int) -> Position:
+        """Public: the board cell a pixel maps to (so callers don't repeat the math)."""
+        return self._pixel_to_cell(x, y)
+
     def jump(self, x: int, y: int) -> None:
         """Make the piece on the clicked cell jump in place (off-board is ignored)."""
         position = self._pixel_to_cell(x, y)
