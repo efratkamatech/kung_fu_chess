@@ -1,5 +1,5 @@
 from kfchess.config import COOLDOWN_MS, JUMP_DURATION_MS, MS_PER_CELL
-from kfchess.control.controller import Controller
+from kfchess.control.controller import ClickOutcome, Controller
 from kfchess.engine.arbiter import RealTimeArbiter
 from kfchess.engine.clock import Clock
 from kfchess.engine.game_engine import GameEngine
@@ -148,3 +148,29 @@ def test_off_board_jump_is_ignored():
     board.place(Position(0, 0), p)
     controller.jump(9999, 9999)  # off board -> ignored
     assert p.state is PieceState.IDLE
+
+
+def test_selected_cell_tracks_selection_and_deselect():
+    board, controller, _ = setup(Board(2, 2))
+    board.place(Position(0, 0), piece())
+    assert controller.selected_cell is None
+    controller.click(50, 50)                      # select (0,0)
+    assert controller.selected_cell == Position(0, 0)
+    controller.deselect()
+    assert controller.selected_cell is None
+
+
+def test_click_reports_each_outcome():
+    board, controller, _ = setup(Board(1, 3))
+    board.place(Position(0, 0), piece(Color.WHITE, "R"))
+    assert controller.click(9999, 9999) is ClickOutcome.IGNORED   # off the board
+    assert controller.click(150, 50) is ClickOutcome.IGNORED      # empty, nothing selected
+    assert controller.click(50, 50) is ClickOutcome.SELECTED      # select the rook
+    assert controller.click(250, 50) is ClickOutcome.MOVED        # (0,2) is legal for a rook
+
+
+def test_click_reports_an_illegal_move():
+    board, controller, _ = setup(Board(3, 3))
+    board.place(Position(0, 0), piece(Color.WHITE, "K"))
+    controller.click(50, 50)                                     # select the king (0,0)
+    assert controller.click(250, 250) is ClickOutcome.ILLEGAL    # (2,2) is too far for a king

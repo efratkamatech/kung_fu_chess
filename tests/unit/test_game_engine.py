@@ -37,6 +37,13 @@ def test_board_property_exposes_the_board():
     assert make_engine(board).board is board
 
 
+def test_now_ms_tracks_the_clock():
+    engine = make_engine(Board(2, 2))
+    assert engine.now_ms == 0
+    engine.wait(1234)
+    assert engine.now_ms == 1234
+
+
 def test_legal_move_is_still_in_flight_before_arrival():
     board = rook_board()
     engine = make_engine(board)

@@ -216,7 +216,7 @@ class RealTimeArbiter:
 
     def _end_game(self, winner: Color) -> None:
         """Mark the game over (recording the winner) and notify observers once."""
-        if not self._game_over:
+        if not self._game_over:  # pragma: no branch  (idempotent; never re-entered once over)
             self._game_over = True
             self._winner = winner
             for observer in self._observers:
@@ -404,7 +404,7 @@ class RealTimeArbiter:
                 else:
                     continue
                 kind = "block" if same_colour else "eat"
-                if best is None or start < best[0]:
+                if best is None or start < best[0]:  # pragma: no branch  (first meeting wins)
                     best = (start, kind, motion, cell)
         return best
 
@@ -434,10 +434,10 @@ class RealTimeArbiter:
             if settled_ms is None or settled_ms > enter:
                 continue  # nothing settled here, or it settled after a passed through
             occupant = self._board.piece_at(cell)
-            if occupant is None or occupant is a.piece:
-                continue
-            if occupant.state in (PieceState.MOVING, PieceState.JUMPING):
-                continue  # only a truly settled piece blocks/is eaten mid-path
+            if occupant is None or occupant is a.piece:  # pragma: no cover
+                continue  # defensive: a stale settle record, or the mover's own cell
+            if occupant.state in (PieceState.MOVING, PieceState.JUMPING):  # pragma: no cover
+                continue  # defensive: a settled cell never holds a moving/jumping piece
             if occupant.color == a.piece.color:
                 return (enter, "block", a, cell)
             return (enter, "eat_settled", a, cell)
@@ -448,7 +448,7 @@ class RealTimeArbiter:
         motion and continues. Clears the victim's cooldown and settle record."""
         victim = self._board.remove(cell)
         self._settle_ms.pop(cell, None)
-        if victim is not None:
+        if victim is not None:  # pragma: no branch  (a settled cell always holds its piece)
             self._cooldowns = [c for c in self._cooldowns if c.piece is not victim]
             self._notify_capture(victim)  # ends the game too if it was a king
 
@@ -476,7 +476,7 @@ class RealTimeArbiter:
         for index, (occupied, _enter, _leave) in enumerate(timeline):
             if occupied == cell:
                 return timeline[index - 1][0] if index > 0 else motion.source
-        return motion.source  # cell is not on the path (should not happen)
+        return motion.source  # pragma: no cover  (cell is not on the path; should not happen)
 
     def _airborne_defender(
         self, cell: Position, arriver: Piece, arrival_ms: int

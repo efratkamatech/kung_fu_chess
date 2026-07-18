@@ -80,7 +80,7 @@ class MouseInput:
         self._board_x_offset = board_x_offset  # left panel width to subtract off clicks
         self._feedback = feedback or ClickFeedback()
 
-    def install(self) -> None:
+    def install(self) -> None:  # pragma: no cover  (registers the cv2 window callback)
         """Attach the callback to the window (the window must already exist)."""
         Img.set_mouse_callback(self._window_name, self._on_mouse)
 

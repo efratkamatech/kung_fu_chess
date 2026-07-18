@@ -26,6 +26,7 @@ from kfchess.graphics.renderer import BoardRenderer
 
 _ESC_KEY = 27
 _NEW_GAME_KEYS = (ord("n"), ord("N"))
+_CONTINUE, _RESTART, _QUIT = "continue", "restart", "quit"
 
 
 class GraphicsApp:
@@ -58,9 +59,14 @@ class GraphicsApp:
         """The game engine (exposed for tests and one-off scripted moves)."""
         return self._engine
 
-    def run(self) -> bool:
+    def run(self) -> bool:  # pragma: no cover  (real-time window/imshow loop; the
         """Run the game loop. Return ``True`` if the player asked for a new game,
-        ``False`` to quit (ESC or the window closed)."""
+        ``False`` to quit (ESC or the window closed).
+
+        This method is pure window/mouse I/O plumbing on a wall-clock loop; the two
+        bits of real logic it delegates to — the next action to take (``_next_action``)
+        and the banner text (``_winner_text``) — are unit-tested directly.
+        """
         Img.create_window(self._window_name, resizable=True)
         self._mouse.install()
         last = time.monotonic()
@@ -70,32 +76,43 @@ class GraphicsApp:
             last = now
             self._engine.wait(min(dt_ms, self._max_dt_ms))
 
-            selected = self._controller.selected_cell
-            legal_targets = (
-                self._engine.legal_targets(selected) if selected is not None else ()
-            )
-            frame = self._renderer.render(
-                self._engine.board,
-                self._engine.moving_pieces(),
-                self._engine.now_ms,
-                selected,
-                self._engine.cooldown_progress(),
-                legal_targets,
-                self._feedback.current(),
-            )
-            if self._engine.is_game_over:
-                self._renderer.draw_game_over(
-                    frame, self._winner_text(), "[N] New Game    [Esc] Quit"
-                )
+            frame = self._compose_frame()
             key = frame.show(self._window_name, self._frame_delay_ms)
 
-            if self._engine.is_game_over and key in _NEW_GAME_KEYS:
+            action = self._next_action(
+                key, self._engine.is_game_over, Img.is_window_closed(self._window_name)
+            )
+            if action != _CONTINUE:
                 Img.destroy_windows()
-                return True
-            if key == _ESC_KEY or Img.is_window_closed(self._window_name):
-                break
-        Img.destroy_windows()
-        return False
+                return action == _RESTART
+
+    def _compose_frame(self):  # pragma: no cover  (assembles the render call for run)
+        selected = self._controller.selected_cell
+        legal_targets = (
+            self._engine.legal_targets(selected) if selected is not None else ()
+        )
+        frame = self._renderer.render(
+            self._engine.board,
+            self._engine.moving_pieces(),
+            self._engine.now_ms,
+            selected,
+            self._engine.cooldown_progress(),
+            legal_targets,
+            self._feedback.current(),
+        )
+        if self._engine.is_game_over:
+            self._renderer.draw_game_over(
+                frame, self._winner_text(), "[N] New Game    [Esc] Quit"
+            )
+        return frame
+
+    def _next_action(self, key: int, game_over: bool, window_closed: bool) -> str:
+        """Decide what the loop should do this frame: continue, restart, or quit."""
+        if game_over and key in _NEW_GAME_KEYS:
+            return _RESTART
+        if key == _ESC_KEY or window_closed:
+            return _QUIT
+        return _CONTINUE
 
     def _winner_text(self) -> str:
         winner = self._engine.winner

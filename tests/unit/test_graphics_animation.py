@@ -33,8 +33,21 @@ def test_zero_fps_stays_on_first_frame():
     assert anim.frame_at(5000) is f[0]
 
 
+def test_negative_elapsed_clamps_to_the_first_frame():
+    f = frames(4)
+    assert Animation(f, fps=8, loop=True).frame_at(-500) is f[0]
+
+
+def test_frame_count_reports_the_number_of_frames():
+    assert Animation(frames(7), fps=4, loop=True).frame_count == 7
+
+
 def test_duration_ms_from_frames_and_fps():
     assert Animation(frames(5), fps=10, loop=False).duration_ms == 500
+
+
+def test_duration_ms_is_zero_when_fps_is_zero():
+    assert Animation(frames(5), fps=0, loop=False).duration_ms == 0
 
 
 def test_empty_frames_rejected():

@@ -252,7 +252,14 @@ class Img:
         cv2.imwrite(str(path), self._require())
         return self
 
-    def show(self, window_name: str = "KungFu Chess", wait_ms: int = 0) -> int:
+    # --- screen / window / mouse I/O ------------------------------------------
+    # These talk to the actual OpenCV window and screen; they have no return value
+    # to assert and need a live display, so they are excluded from coverage. The
+    # logic that *decides* to call them lives elsewhere and is unit-tested.
+
+    def show(  # pragma: no cover
+        self, window_name: str = "KungFu Chess", wait_ms: int = 0
+    ) -> int:
         """Display the image in a window and return the key pressed within ``wait_ms``.
 
         ``wait_ms == 0`` blocks until a key is pressed; the frame loop passes a small
@@ -263,7 +270,7 @@ class Img:
         return cv2.waitKey(wait_ms)
 
     @staticmethod
-    def is_window_closed(window_name: str) -> bool:
+    def is_window_closed(window_name: str) -> bool:  # pragma: no cover
         """True once the window has been closed (e.g. the user clicked its X button).
 
         Also true before the window exists, so the frame loop must show at least one
@@ -272,11 +279,9 @@ class Img:
         return cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1
 
     @staticmethod
-    def destroy_windows() -> None:
+    def destroy_windows() -> None:  # pragma: no cover
         """Close every OpenCV window (called once when the frame loop ends)."""
         cv2.destroyAllWindows()
-
-    # --- window / mouse input (cv2 kept encapsulated here) -------------------
 
     # Mouse-event codes the input layer compares against, re-exported so no other
     # module has to import cv2.
@@ -284,7 +289,7 @@ class Img:
     MOUSE_RIGHT_DOWN = cv2.EVENT_RBUTTONDOWN
 
     @staticmethod
-    def create_window(window_name: str, resizable: bool = True) -> None:
+    def create_window(window_name: str, resizable: bool = True) -> None:  # pragma: no cover
         """Create a named window ahead of showing frames.
 
         A ``resizable`` window (``WINDOW_NORMAL``) lets the user drag it to any size —
@@ -294,12 +299,12 @@ class Img:
         cv2.namedWindow(window_name, flag)
 
     @staticmethod
-    def set_mouse_callback(window_name: str, callback) -> None:
+    def set_mouse_callback(window_name: str, callback) -> None:  # pragma: no cover
         """Register ``callback(event, x, y, flags, param)`` for mouse events on a window."""
         cv2.setMouseCallback(window_name, callback)
 
     @staticmethod
-    def window_image_size(window_name: str) -> Tuple[int, int]:
+    def window_image_size(window_name: str) -> Tuple[int, int]:  # pragma: no cover
         """The current on-screen size ``(width, height)`` of the window's image area.
 
         Used to scale mouse coordinates: when the window is resized this differs from
