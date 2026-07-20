@@ -1,7 +1,7 @@
 from kfchess.app.bootstrap import build_game
 from kfchess.config import BOARD_CSV
 from kfchess.control.controller import ClickOutcome
-from kfchess.graphics.assets import load_board_csv
+from kfchess.tokens import load_board_csv
 from kfchess.model.position import Position
 
 

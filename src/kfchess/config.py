@@ -127,6 +127,13 @@ GAMEOVER_TEXT_COLOR = (255, 255, 255)
 # player is about to interact with it.
 STARTBANNER_ALPHA = 0.35
 
+# --- Networking (the WebSocket server) ---------------------------------------
+SERVER_HOST = "localhost"
+SERVER_PORT = 8765
+# How often the server advances the game and broadcasts a fresh snapshot. ~20/sec
+# keeps in-flight motion looking smooth on the clients.
+SERVER_TICK_MS = 50
+
 # --- Sound effects (played in reaction to bus events) ------------------------
 # Effect names: the SoundEffects subscriber plays one of these per game event.
 SOUND_MOVE = "move"

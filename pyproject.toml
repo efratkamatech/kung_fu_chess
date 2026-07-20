@@ -16,6 +16,11 @@ dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
 ]
+# The networked server. The text/graphics core stays pure stdlib; only the
+# WebSocket server needs this. Installed with:  pip install -e ".[server]"
+server = [
+    "websockets>=12",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,9 +1,9 @@
 from kfchess.config import CELL_PX, PIECES_DIR, STATE_IDLE, STATE_JUMP
-from kfchess.graphics.assets import AnimationBank, load_board_csv
+from kfchess.graphics.assets import AnimationBank
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import PieceType, standard_piece_types
-from kfchess.tokens import piece_token, token_to_piece
+from kfchess.tokens import load_board_csv, piece_token, token_to_piece
 
 
 def test_piece_token_composes_color_and_letter():

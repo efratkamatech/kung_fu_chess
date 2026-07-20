@@ -1,6 +1,6 @@
 from kfchess.app.bootstrap import build_game
 from kfchess.config import BOARD_CSV
-from kfchess.graphics.assets import load_board_csv
+from kfchess.tokens import load_board_csv
 from kfchess.graphics.img import Img
 from kfchess.graphics.input import ClickFeedback, MouseInput, window_to_board
 from kfchess.model.piece import PieceState

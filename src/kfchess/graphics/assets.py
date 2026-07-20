@@ -2,50 +2,26 @@
 
 This is the bridge from files on disk to the game core:
 
-- :func:`load_board_csv` reads ``board.csv`` into a core :class:`Board`, reusing the
-  same token vocabulary as the text layer (``wK``, ``bP``, ...) via
-  :func:`kfchess.tokens.token_to_piece`.
 - :class:`AnimationBank` loads and caches the piece sprites. Crucially, a piece's
   sprite folder is named by its **token** — exactly what
   :func:`kfchess.tokens.piece_token` builds from a :class:`Piece` — so mapping a board
   piece to its images needs no lookup table, just string composition.
 
-Only the graphics layer imports this; the text/VPL path is untouched.
+The token vocabulary and the CSV board loader live in :mod:`kfchess.tokens` so the
+headless server can share them; only the sprite loading below is graphics-specific.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Tuple, Union
 
 from kfchess.config import FPS_DEFAULT, STATE_IDLE
 from kfchess.graphics.animation import Animation
 from kfchess.graphics.img import Img
-from kfchess.model.board import Board
-from kfchess.model.piece_type import PieceTypeRegistry, standard_piece_types
-from kfchess.tokens import token_to_piece
 
 PathLike = Union[str, Path]
-
-
-def load_board_csv(
-    path: PathLike, piece_types: Optional[PieceTypeRegistry] = None
-) -> Board:
-    """Build a core :class:`Board` from a ``board.csv`` file.
-
-    Each line is one board row of comma-separated cell tokens; an empty field is an
-    empty cell. Truly blank lines (e.g. a trailing newline) are skipped, but a row of
-    all-empty cells (``,,,,,,,``) is a real empty row and is kept.
-    """
-    piece_types = piece_types or standard_piece_types()
-    grid = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if not line.strip() and "," not in line:
-            continue  # a genuinely blank line, not an empty board row
-        row = [token_to_piece(cell, piece_types) for cell in line.split(",")]
-        grid.append(row)
-    return Board.from_grid(grid)
 
 
 class AnimationBank:

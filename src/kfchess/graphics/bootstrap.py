@@ -23,7 +23,7 @@ from kfchess.config import (
     WHITE_PLAYER_NAME,
 )
 from kfchess.graphics.app import GraphicsApp
-from kfchess.graphics.assets import AnimationBank, load_board_csv
+from kfchess.graphics.assets import AnimationBank
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.input import ClickFeedback, MouseInput
@@ -31,6 +31,7 @@ from kfchess.graphics.renderer import BoardRenderer
 from kfchess.graphics.sound import SoundEffects, SoundPlayer
 from kfchess.model.color import Color
 from kfchess.observers import GameBanner, MovesLog, ScoreBoard
+from kfchess.tokens import load_board_csv
 
 
 def build_graphics_app(
