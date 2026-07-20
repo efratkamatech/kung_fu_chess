@@ -30,7 +30,7 @@ from kfchess.config import (
     STATE_IDLE,
 )
 from kfchess.engine.arbiter import MovingPiece
-from kfchess.graphics.assets import AnimationBank, piece_token
+from kfchess.graphics.assets import AnimationBank
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.img import Img
@@ -38,6 +38,7 @@ from kfchess.graphics.piece_view import PieceView
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
 from kfchess.model.position import Position
+from kfchess.tokens import piece_token
 
 PathLike = Union[str, Path]
 

@@ -1,6 +1,6 @@
 from kfchess.bus.event_bus import EventBus
 from kfchess.bus.events import Captured, MoveStarted
-from kfchess.graphics.events import MovesLog, ScoreBoard
+from kfchess.observers import MovesLog, ScoreBoard
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types

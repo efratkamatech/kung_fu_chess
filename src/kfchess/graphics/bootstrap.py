@@ -24,14 +24,13 @@ from kfchess.config import (
 )
 from kfchess.graphics.app import GraphicsApp
 from kfchess.graphics.assets import AnimationBank, load_board_csv
-from kfchess.graphics.banner import GameBanner
-from kfchess.graphics.events import MovesLog, ScoreBoard
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.input import ClickFeedback, MouseInput
 from kfchess.graphics.renderer import BoardRenderer
 from kfchess.graphics.sound import SoundEffects, SoundPlayer
 from kfchess.model.color import Color
+from kfchess.observers import GameBanner, MovesLog, ScoreBoard
 
 
 def build_graphics_app(

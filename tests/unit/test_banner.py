@@ -2,7 +2,7 @@
 
 from kfchess.bus.event_bus import EventBus
 from kfchess.bus.events import Captured, GameOver, GameStarted, MoveStarted
-from kfchess.graphics.banner import GameBanner
+from kfchess.observers import GameBanner
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
@@ -55,6 +55,15 @@ def test_game_over_shows_the_over_overlay():
     bus.publish(GameOver())
     assert banner.is_over
     assert not banner.show_start
+
+
+def test_phase_reports_the_current_phase_name():
+    bus, banner = wired_banner()
+    assert banner.phase == "playing"  # neutral before a game starts
+    bus.publish(GameStarted())
+    assert banner.phase == "start"
+    bus.publish(GameOver())
+    assert banner.phase == "over"
 
 
 def test_a_capture_alone_does_not_change_the_overlay():

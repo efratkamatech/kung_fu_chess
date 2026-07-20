@@ -8,9 +8,9 @@ Each is pure output: it reads its player's accumulated state (from a shared
 from __future__ import annotations
 
 from kfchess.config import HUD_MOVES_VISIBLE, HUD_TEXT_COLOR
-from kfchess.graphics.events import MovesLog, ScoreBoard
 from kfchess.graphics.img import Img
 from kfchess.model.color import Color
+from kfchess.observers import MovesLog, ScoreBoard
 
 
 class Hud:

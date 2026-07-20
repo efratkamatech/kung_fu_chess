@@ -2,7 +2,7 @@ import numpy as np
 
 from kfchess.bus.event_bus import EventBus
 from kfchess.bus.events import MoveStarted
-from kfchess.graphics.events import MovesLog, ScoreBoard
+from kfchess.observers import MovesLog, ScoreBoard
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.img import Img
 from kfchess.model.color import Color

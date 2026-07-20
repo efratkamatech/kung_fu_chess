@@ -9,8 +9,7 @@ from kfchess.app.bootstrap import build_game
 from kfchess.bus.event_bus import EventBus
 from kfchess.bus.events import GameStarted
 from kfchess.bus.publisher import BusPublisher
-from kfchess.graphics.banner import GameBanner
-from kfchess.graphics.events import MovesLog, ScoreBoard
+from kfchess.observers import GameBanner, MovesLog, ScoreBoard
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece

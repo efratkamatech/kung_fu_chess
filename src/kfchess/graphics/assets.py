@@ -3,11 +3,12 @@
 This is the bridge from files on disk to the game core:
 
 - :func:`load_board_csv` reads ``board.csv`` into a core :class:`Board`, reusing the
-  same token vocabulary as the text layer (``wK``, ``bP``, ...).
-- :class:`SpriteBank` loads and caches the piece sprites. Crucially, a piece's
-  sprite folder is named by its **token** — exactly what :func:`piece_token` builds
-  from a :class:`Piece` — so mapping a board piece to its images needs no lookup
-  table, just string composition.
+  same token vocabulary as the text layer (``wK``, ``bP``, ...) via
+  :func:`kfchess.tokens.token_to_piece`.
+- :class:`AnimationBank` loads and caches the piece sprites. Crucially, a piece's
+  sprite folder is named by its **token** — exactly what
+  :func:`kfchess.tokens.piece_token` builds from a :class:`Piece` — so mapping a board
+  piece to its images needs no lookup table, just string composition.
 
 Only the graphics layer imports this; the text/VPL path is untouched.
 """
@@ -19,38 +20,13 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
 from kfchess.config import FPS_DEFAULT, STATE_IDLE
-from kfchess.model.board import Board
-from kfchess.model.color import Color
-from kfchess.model.piece import Piece
-from kfchess.model.piece_type import PieceTypeRegistry, standard_piece_types
 from kfchess.graphics.animation import Animation
 from kfchess.graphics.img import Img
+from kfchess.model.board import Board
+from kfchess.model.piece_type import PieceTypeRegistry, standard_piece_types
+from kfchess.tokens import token_to_piece
 
 PathLike = Union[str, Path]
-
-
-def piece_token(piece: Piece) -> str:
-    """The token/folder name for a piece — a white king is ``"wK"``.
-
-    This is the same composition the text printer uses, so a piece's token and its
-    sprite folder name are guaranteed to agree.
-    """
-    return f"{piece.color.prefix}{piece.piece_type.letter}"
-
-
-def token_to_piece(token: str, piece_types: PieceTypeRegistry) -> Optional[Piece]:
-    """Turn a CSV cell token into a :class:`Piece`, or ``None`` for an empty cell.
-
-    ``"wK"`` -> a white king; ``""`` (or whitespace) -> an empty cell. Reuses the
-    core's own colour/type resolution, so an unknown token raises the same
-    ``ValueError``/``KeyError`` the text parser would surface.
-    """
-    token = token.strip()
-    if not token:
-        return None
-    color = Color.from_prefix(token[0])
-    piece_type = piece_types.get(token[1:])
-    return Piece(piece_type, color)
 
 
 def load_board_csv(
