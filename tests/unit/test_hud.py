@@ -1,5 +1,7 @@
 import numpy as np
 
+from kfchess.bus.event_bus import EventBus
+from kfchess.bus.events import MoveStarted
 from kfchess.graphics.events import MovesLog, ScoreBoard
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.img import Img
@@ -10,9 +12,15 @@ from kfchess.model.position import Position
 
 
 def test_hud_draw_writes_name_score_and_moves_onto_the_canvas():
+    bus = EventBus()
     log = MovesLog(board_rows=8)
-    log.on_move_started(
-        Piece(standard_piece_types().get("N"), Color.WHITE), Position(7, 1), Position(5, 2)
+    log.subscribe(bus)
+    bus.publish(
+        MoveStarted(
+            Piece(standard_piece_types().get("N"), Color.WHITE),
+            Position(7, 1),
+            Position(5, 2),
+        )
     )
     score = ScoreBoard()
     hud = Hud("Efrat", Color.WHITE, log, score, left_x=20)

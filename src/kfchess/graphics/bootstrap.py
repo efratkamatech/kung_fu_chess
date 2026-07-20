@@ -10,6 +10,8 @@ run on identical logic; only the input (mouse), output (window), and observers d
 from __future__ import annotations
 
 from kfchess.app.bootstrap import build_game
+from kfchess.bus.event_bus import EventBus
+from kfchess.bus.publisher import BusPublisher
 from kfchess.config import (
     BLACK_PLAYER_NAME,
     BOARD_CSV,
@@ -38,12 +40,15 @@ def build_graphics_app(
     board = load_board_csv(BOARD_CSV)
     engine, controller = build_game(board)
 
-    # Observers: register onto the engine's shared list so they receive both the
-    # engine's move-starts and the arbiter's captures.
+    # The event bus: the engine/arbiter announce game events through a single
+    # BusPublisher (registered on the engine's observer list), and the subscribers
+    # below react to them. New reactions (sound, animations) just subscribe too.
+    bus = EventBus()
+    engine.add_observer(BusPublisher(bus))
     moves_log = MovesLog(board.rows)
     score_board = ScoreBoard()
-    engine.add_observer(moves_log)
-    engine.add_observer(score_board)
+    moves_log.subscribe(bus)
+    score_board.subscribe(bus)
 
     # Two side panels: black on the left, white on the right, board in the middle.
     board_w, board_h = board_pixel_size(board, CELL_PX)
