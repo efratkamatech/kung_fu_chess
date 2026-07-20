@@ -13,11 +13,11 @@ from __future__ import annotations
 
 from typing import Dict, List
 
+from kfchess.algebraic import position_to_square
 from kfchess.bus import topics
 from kfchess.bus.event_bus import EventBus
 from kfchess.graphics.assets import piece_token
 from kfchess.model.color import Color
-from kfchess.model.position import Position
 
 
 class MovesLog:
@@ -38,9 +38,10 @@ class MovesLog:
         bus.subscribe(topics.CAPTURE, self._on_capture)
 
     def _on_move(self, event) -> None:
+        source = position_to_square(event.source, self._board_rows)
+        target = position_to_square(event.target, self._board_rows)
         self._by_color[event.piece.color].append(
-            f"{piece_token(event.piece)} "
-            f"{self._square(event.source)} -> {self._square(event.target)}"
+            f"{piece_token(event.piece)} {source} -> {target}"
         )
 
     def _on_capture(self, event) -> None:
@@ -51,12 +52,6 @@ class MovesLog:
     def recent(self, color: Color, count: int) -> List[str]:
         """The most recent ``count`` log lines for ``color`` (oldest first)."""
         return self._by_color[color][-count:]
-
-    def _square(self, position: Position) -> str:
-        """Chess-style square name, e.g. ``e2`` (file a.. from col, rank 1.. from bottom)."""
-        file = chr(ord("a") + position.col)
-        rank = self._board_rows - position.row
-        return f"{file}{rank}"
 
 
 class ScoreBoard:
