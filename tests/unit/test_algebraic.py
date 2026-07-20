@@ -2,8 +2,15 @@
 
 import pytest
 
-from kfchess.algebraic import position_to_square, square_to_position
+from kfchess.algebraic import build_command, position_to_square, square_to_position
+from kfchess.model.color import Color
 from kfchess.model.position import Position
+
+
+def test_build_command_composes_colour_piece_and_squares():
+    cmd = build_command(Color.WHITE, "Q", Position(6, 4), Position(3, 4), rows=8)
+    assert cmd == "WQe2e5"
+    assert build_command(Color.BLACK, "N", Position(0, 1), Position(2, 2), rows=8) == "BNb8c6"
 
 
 def test_position_to_square_reads_file_and_rank_from_the_bottom():

@@ -10,7 +10,23 @@ Ranks are a single digit here (boards up to 9 rows), which is all Kung Fu Chess 
 
 from __future__ import annotations
 
+from kfchess.model.color import Color
 from kfchess.model.position import Position
+
+
+def build_command(
+    color: Color, piece_letter: str, source: Position, target: Position, rows: int
+) -> str:
+    """Compose a wire move command, e.g. ``build_command(WHITE, "Q", e2, e5) -> "WQe2e5"``.
+
+    The inverse of the server's ``parse_command``: a colour letter (``W``/``B``), the
+    piece letter, and the two squares. Used by the client to turn a click into the
+    command it sends.
+    """
+    return (
+        f"{color.value.upper()}{piece_letter}"
+        f"{position_to_square(source, rows)}{position_to_square(target, rows)}"
+    )
 
 
 def position_to_square(position: Position, rows: int) -> str:
