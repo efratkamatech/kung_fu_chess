@@ -5,8 +5,10 @@ than the core Controller: it only tracks which of *your own* pieces is selected 
 from the latest snapshot) and, on the next click, composes the ``WQe2e5`` command to
 send — it never mutates a board. A spectator (no colour) can select nothing.
 
-It works in board cells; mapping a pixel to a cell is the mouse layer's job. The
-returned string is the command the caller hands to :meth:`NetClient.queue_command`.
+The colour is passed in at click time rather than stored, because it is assigned by the
+server only after connecting; the caller reads it from ``NetClient.color``. It works in
+board cells; mapping a pixel to a cell is the mouse layer's job. The returned string is
+the command the caller hands to :meth:`NetClient.queue_command`.
 """
 
 from __future__ import annotations
@@ -22,8 +24,7 @@ from kfchess.snapshot import GameSnapshot
 class ClientController:
     """Holds the selected cell and turns a follow-up click into a move command."""
 
-    def __init__(self, color: Optional[Color]) -> None:
-        self._color = color  # this client's colour, or None for a spectator
+    def __init__(self) -> None:
         self._selected: Optional[Position] = None
         self._selected_token: Optional[str] = None
 
@@ -32,15 +33,17 @@ class ClientController:
         """The currently selected cell, or ``None`` — the renderer outlines it."""
         return self._selected
 
-    def click(self, cell: Position, snapshot: GameSnapshot) -> Optional[str]:
-        """Interpret a click on ``cell`` against ``snapshot``; return a command or None.
+    def click(
+        self, cell: Position, snapshot: GameSnapshot, color: Optional[Color]
+    ) -> Optional[str]:
+        """Interpret a click on ``cell`` for a player of ``color``; return a command or None.
 
         Nothing selected: clicking your own piece selects it. Something selected:
         clicking another of your pieces switches the selection; clicking any other cell
         builds the move command and clears the selection. Off-board clicks and
-        spectators do nothing.
+        spectators (``color is None``) do nothing.
         """
-        if self._color is None or not self._in_bounds(cell, snapshot):
+        if color is None or not self._in_bounds(cell, snapshot):
             return None
         # Drop a stale selection: the selected piece may have moved or been captured
         # since we picked it, so the selected cell no longer holds our token.
@@ -51,7 +54,7 @@ class ClientController:
             self._clear()
 
         token = self._token_at(snapshot, cell)
-        mine = token is not None and token[0] == self._color.prefix
+        mine = token is not None and token[0] == color.prefix
         if self._selected is None:
             if mine:
                 self._select(cell, token)
@@ -60,7 +63,7 @@ class ClientController:
             self._select(cell, token)  # switch to the newly clicked friendly piece
             return None
         command = build_command(
-            self._color, self._selected_token[1:], self._selected, cell, snapshot.rows
+            color, self._selected_token[1:], self._selected, cell, snapshot.rows
         )
         self._clear()
         return command

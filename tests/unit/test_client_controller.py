@@ -31,58 +31,58 @@ def board_white_rook_black_king():
 
 
 def test_a_spectator_selects_nothing():
-    controller = ClientController(color=None)
-    assert controller.click(Position(1, 0), board_white_rook_black_king()) is None
+    controller = ClientController()
+    assert controller.click(Position(1, 0), board_white_rook_black_king(), None) is None
     assert controller.selected is None
 
 
 def test_clicking_your_own_piece_selects_it():
-    controller = ClientController(Color.WHITE)
-    assert controller.click(Position(1, 0), board_white_rook_black_king()) is None
+    controller = ClientController()
+    assert controller.click(Position(1, 0), board_white_rook_black_king(), Color.WHITE) is None
     assert controller.selected == Position(1, 0)
 
 
 def test_selecting_then_clicking_a_target_builds_the_command():
-    controller = ClientController(Color.WHITE)
+    controller = ClientController()
     snapshot = board_white_rook_black_king()
-    controller.click(Position(1, 0), snapshot)          # select the rook at a1
-    command = controller.click(Position(0, 0), snapshot)  # move to a2
+    controller.click(Position(1, 0), snapshot, Color.WHITE)          # select the rook at a1
+    command = controller.click(Position(0, 0), snapshot, Color.WHITE)  # move to a2
     assert command == "WRa1a2"
-    assert controller.selected is None                   # selection cleared
+    assert controller.selected is None                               # selection cleared
 
 
 def test_selecting_then_clicking_an_enemy_builds_a_capture_command():
-    controller = ClientController(Color.WHITE)
+    controller = ClientController()
     snapshot = board_white_rook_black_king()
-    controller.click(Position(1, 0), snapshot)           # select rook a1
-    assert controller.click(Position(0, 1), snapshot) == "WRa1b2"  # capture the king
+    controller.click(Position(1, 0), snapshot, Color.WHITE)          # select rook a1
+    assert controller.click(Position(0, 1), snapshot, Color.WHITE) == "WRa1b2"  # capture king
 
 
 def test_clicking_another_of_your_pieces_switches_the_selection():
     two_rooks = snapshot_with(
         [[CellView("wR", "IDLE"), None], [CellView("wR", "IDLE"), None]]
     )
-    controller = ClientController(Color.WHITE)
-    controller.click(Position(0, 0), two_rooks)
-    assert controller.click(Position(1, 0), two_rooks) is None  # switched, no command
+    controller = ClientController()
+    controller.click(Position(0, 0), two_rooks, Color.WHITE)
+    assert controller.click(Position(1, 0), two_rooks, Color.WHITE) is None  # switched
     assert controller.selected == Position(1, 0)
 
 
 def test_clicking_an_enemy_piece_first_does_nothing():
-    controller = ClientController(Color.WHITE)
-    assert controller.click(Position(0, 1), board_white_rook_black_king()) is None  # black king
+    controller = ClientController()
+    assert controller.click(Position(0, 1), board_white_rook_black_king(), Color.WHITE) is None
     assert controller.selected is None
 
 
 def test_an_off_board_click_is_ignored():
-    controller = ClientController(Color.WHITE)
-    assert controller.click(Position(9, 9), board_white_rook_black_king()) is None
+    controller = ClientController()
+    assert controller.click(Position(9, 9), board_white_rook_black_king(), Color.WHITE) is None
 
 
 def test_a_stale_selection_is_dropped_when_the_piece_is_gone():
-    controller = ClientController(Color.WHITE)
-    controller.click(Position(1, 0), board_white_rook_black_king())  # select rook at a1
+    controller = ClientController()
+    controller.click(Position(1, 0), board_white_rook_black_king(), Color.WHITE)  # select a1
     # a new snapshot where the rook has left a1 (e.g. it moved); the cell is now empty
     moved = snapshot_with([[None, CellView("bK", "IDLE")], [None, None]])
-    assert controller.click(Position(0, 0), moved) is None  # no command; selection dropped
+    assert controller.click(Position(0, 0), moved, Color.WHITE) is None  # selection dropped
     assert controller.selected is None
