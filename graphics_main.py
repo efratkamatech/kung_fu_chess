@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from kfchess.config import BLACK_PLAYER_NAME, WHITE_PLAYER_NAME  # noqa: E402
 from kfchess.graphics.bootstrap import build_graphics_app  # noqa: E402
+from kfchess.graphics.sound import WinsoundPlayer  # noqa: E402
 
 
 def main() -> None:
@@ -33,9 +34,14 @@ def main() -> None:
     parser.add_argument("--black", default=BLACK_PLAYER_NAME, help="black player's name")
     args = parser.parse_args()
 
+    # A real sound player here (silent by default in the app factory) so the windowed
+    # game actually beeps on moves, captures, and game start/end.
+    sound = WinsoundPlayer()
     # run() returns True when the player picks "New Game" on the game-over banner, so
     # we build a fresh game and loop; it returns False to quit.
-    while build_graphics_app(white_name=args.white, black_name=args.black).run():
+    while build_graphics_app(
+        white_name=args.white, black_name=args.black, sound_player=sound
+    ).run():
         pass
 
 

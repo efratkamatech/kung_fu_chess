@@ -123,3 +123,18 @@ BLACK_PLAYER_NAME = "Black"
 GAMEOVER_BG = (0, 0, 0)            # dim overlay colour (B, G, R)
 GAMEOVER_ALPHA = 0.6              # overlay opacity
 GAMEOVER_TEXT_COLOR = (255, 255, 255)
+
+# --- Sound effects (played in reaction to bus events) ------------------------
+# Effect names: the SoundEffects subscriber plays one of these per game event.
+SOUND_MOVE = "move"
+SOUND_CAPTURE = "capture"
+SOUND_GAME_START = "game_start"
+SOUND_GAME_OVER = "game_over"
+# Winsound fallback tones per effect: (frequency in Hz, duration in ms). Used by
+# WinsoundPlayer so the game makes sound with no audio-asset files.
+WINSOUND_TONES = {
+    SOUND_MOVE: (600, 60),
+    SOUND_CAPTURE: (300, 120),
+    SOUND_GAME_START: (880, 150),
+    SOUND_GAME_OVER: (200, 400),
+}

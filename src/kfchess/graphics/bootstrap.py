@@ -28,6 +28,7 @@ from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.input import ClickFeedback, MouseInput
 from kfchess.graphics.renderer import BoardRenderer
+from kfchess.graphics.sound import SoundEffects, SoundPlayer
 from kfchess.model.color import Color
 
 
@@ -35,20 +36,27 @@ def build_graphics_app(
     window_name: str = "KungFu Chess",
     white_name: str = WHITE_PLAYER_NAME,
     black_name: str = BLACK_PLAYER_NAME,
+    sound_player: SoundPlayer = None,
 ) -> GraphicsApp:
-    """Load assets, build the core game, wire input + observers, and return the app."""
+    """Load assets, build the core game, wire input + observers, and return the app.
+
+    ``sound_player`` is injected: it defaults to a silent :class:`SoundPlayer` (so
+    tests make no sound), and the launcher passes a real one to actually beep.
+    """
     board = load_board_csv(BOARD_CSV)
     engine, controller = build_game(board)
 
     # The event bus: the engine/arbiter announce game events through a single
     # BusPublisher (registered on the engine's observer list), and the subscribers
-    # below react to them. New reactions (sound, animations) just subscribe too.
+    # below react to them. New reactions just subscribe too.
     bus = EventBus()
     engine.add_observer(BusPublisher(bus))
     moves_log = MovesLog(board.rows)
     score_board = ScoreBoard()
+    sound = SoundEffects(sound_player if sound_player is not None else SoundPlayer())
     moves_log.subscribe(bus)
     score_board.subscribe(bus)
+    sound.subscribe(bus)
 
     # Two side panels: black on the left, white on the right, board in the middle.
     board_w, board_h = board_pixel_size(board, CELL_PX)
