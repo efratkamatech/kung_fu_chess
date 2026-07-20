@@ -123,6 +123,9 @@ BLACK_PLAYER_NAME = "Black"
 GAMEOVER_BG = (0, 0, 0)            # dim overlay colour (B, G, R)
 GAMEOVER_ALPHA = 0.6              # overlay opacity
 GAMEOVER_TEXT_COLOR = (255, 255, 255)
+# The start banner reuses the same overlay, but dims the board more lightly since the
+# player is about to interact with it.
+STARTBANNER_ALPHA = 0.35
 
 # --- Sound effects (played in reaction to bus events) ------------------------
 # Effect names: the SoundEffects subscriber plays one of these per game event.

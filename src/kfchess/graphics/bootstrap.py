@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from kfchess.app.bootstrap import build_game
 from kfchess.bus.event_bus import EventBus
+from kfchess.bus.events import GameStarted
 from kfchess.bus.publisher import BusPublisher
 from kfchess.config import (
     BLACK_PLAYER_NAME,
@@ -23,6 +24,7 @@ from kfchess.config import (
 )
 from kfchess.graphics.app import GraphicsApp
 from kfchess.graphics.assets import AnimationBank, load_board_csv
+from kfchess.graphics.banner import GameBanner
 from kfchess.graphics.events import MovesLog, ScoreBoard
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
@@ -54,9 +56,15 @@ def build_graphics_app(
     moves_log = MovesLog(board.rows)
     score_board = ScoreBoard()
     sound = SoundEffects(sound_player if sound_player is not None else SoundPlayer())
+    banner = GameBanner()
     moves_log.subscribe(bus)
     score_board.subscribe(bus)
     sound.subscribe(bus)
+    banner.subscribe(bus)
+
+    # Everything is now listening, so announce the game has started: this drives the
+    # start overlay and the start sound.
+    bus.publish(GameStarted())
 
     # Two side panels: black on the left, white on the right, board in the middle.
     board_w, board_h = board_pixel_size(board, CELL_PX)
@@ -84,5 +92,6 @@ def build_graphics_app(
     )
     player_names = {Color.WHITE: white_name, Color.BLACK: black_name}
     return GraphicsApp(
-        engine, controller, renderer, mouse, feedback, player_names, window_name
+        engine, controller, renderer, mouse, feedback, player_names, window_name,
+        banner=banner,
     )

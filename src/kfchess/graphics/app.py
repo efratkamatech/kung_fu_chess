@@ -43,6 +43,7 @@ class GraphicsApp:
         window_name: str = "KungFu Chess",
         frame_delay_ms: int = 16,
         max_dt_ms: int = 100,
+        banner=None,
     ) -> None:
         self._engine = engine
         self._controller = controller
@@ -53,6 +54,7 @@ class GraphicsApp:
         self._window_name = window_name
         self._frame_delay_ms = frame_delay_ms  # ~16 ms -> ~60 fps cap
         self._max_dt_ms = max_dt_ms  # clamp so a long stall doesn't teleport pieces
+        self._banner = banner  # bus-driven start/over overlay state (None in unit tests)
 
     @property
     def engine(self) -> GameEngine:
@@ -100,9 +102,13 @@ class GraphicsApp:
             legal_targets,
             self._feedback.current(),
         )
-        if self._engine.is_game_over:
+        if self._banner.is_over:
             self._renderer.draw_game_over(
                 frame, self._winner_text(), "[N] New Game    [Esc] Quit"
+            )
+        elif self._banner.show_start:
+            self._renderer.draw_start_banner(
+                frame, "KungFu Chess", "Click a piece to begin"
             )
         return frame
 

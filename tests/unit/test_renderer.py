@@ -94,6 +94,15 @@ def test_game_over_dims_the_board_area():
     assert after < before  # the board is darkened behind the banner
 
 
+def test_start_banner_dims_the_board_area():
+    renderer = a_renderer(left_panel_px=PANEL_PX, right_panel_px=PANEL_PX)
+    frame = renderer.render(load_board_csv(BOARD_CSV))
+    before = cell(frame, 4, 4, x_offset=PANEL_PX).mean()
+    renderer.draw_start_banner(frame, "KungFu Chess", "Click a piece to begin")
+    after = cell(frame, 4, 4, x_offset=PANEL_PX).mean()
+    assert after < before  # the board is lightly darkened behind the start banner
+
+
 def test_render_draws_the_hud_panel():
     board = Board(8, 8)
     hud = Hud("Efrat", Color.WHITE, MovesLog(8), ScoreBoard(), left_x=8 * CELL_PX + 10)

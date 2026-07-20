@@ -26,6 +26,7 @@ from kfchess.config import (
     LEGAL_MOVE_COLOR,
     PANEL_BG,
     SELECT_COLOR,
+    STARTBANNER_ALPHA,
     STATE_IDLE,
 )
 from kfchess.engine.arbiter import MovingPiece
@@ -134,8 +135,18 @@ class BoardRenderer:
 
     def draw_game_over(self, canvas: Img, title: str, subtitle: str) -> None:
         """Dim the board area and centre a game-over ``title`` + ``subtitle`` on it."""
+        self._draw_banner(canvas, title, subtitle, GAMEOVER_ALPHA)
+
+    def draw_start_banner(self, canvas: Img, title: str, subtitle: str) -> None:
+        """Lightly dim the board area and centre a start ``title`` + ``subtitle``."""
+        self._draw_banner(canvas, title, subtitle, STARTBANNER_ALPHA)
+
+    def _draw_banner(
+        self, canvas: Img, title: str, subtitle: str, alpha: float
+    ) -> None:
+        """Dim the board area by ``alpha`` and centre a ``title`` + ``subtitle`` on it."""
         board_w = canvas.width - self._left_px - self._right_px
-        canvas.fill_rect(self._left_px, 0, board_w, canvas.height, GAMEOVER_BG, GAMEOVER_ALPHA)
+        canvas.fill_rect(self._left_px, 0, board_w, canvas.height, GAMEOVER_BG, alpha)
         center_x = self._left_px + board_w // 2
         middle_y = canvas.height // 2
         canvas.put_text_centered(title, center_x, middle_y, 1.6, GAMEOVER_TEXT_COLOR, 3)
