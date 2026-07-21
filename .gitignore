@@ -16,6 +16,9 @@ env/
 .coverage.*
 htmlcov/
 
+# Server-side accounts database (created at runtime, not source)
+users.db
+
 # Editor / OS noise
 .vscode/
 .idea/
