@@ -1,5 +1,6 @@
 """Tests for GameSession: colour assignment, move handling, and snapshots."""
 
+from kfchess.config import SOUND_CAPTURE, SOUND_GAME_OVER, SOUND_GAME_START, SOUND_MOVE
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
@@ -104,3 +105,39 @@ def test_capturing_the_king_is_reflected_in_the_snapshot():
     assert snapshot.phase == "over"
     assert snapshot.winner is Color.WHITE
     assert "x bK" in snapshot.logs[Color.WHITE]
+
+
+# --- immediate-reaction events (sound) ----------------------------------------
+
+def test_game_started_is_queued_as_soon_as_the_session_is_built():
+    session = rook_session()
+    assert session.drain_events() == [SOUND_GAME_START]
+
+
+def test_drain_events_clears_the_queue():
+    session = rook_session()
+    session.drain_events()
+    assert session.drain_events() == []  # nothing left the second time
+
+
+def test_a_move_queues_a_move_sound():
+    session = rook_session()
+    session.drain_events()  # clear the initial game-start event
+    session.apply_command(Color.WHITE, "WRa1a3")
+    assert session.drain_events() == [SOUND_MOVE]
+
+
+def test_an_illegal_move_queues_no_event():
+    session = rook_session()
+    session.drain_events()
+    session.apply_command(Color.WHITE, "WRa1b2")  # rejected: illegal
+    assert session.drain_events() == []
+
+
+def test_capturing_the_king_queues_capture_then_game_over():
+    session = king_session()
+    session.drain_events()  # clear the initial game-start event
+    session.apply_command(Color.WHITE, "WRa1a3")
+    session.drain_events()  # clear the move event
+    session.tick(100000)    # rook arrives and captures the king
+    assert session.drain_events() == [SOUND_CAPTURE, SOUND_GAME_OVER]

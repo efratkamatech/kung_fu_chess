@@ -25,6 +25,7 @@ MOVE = "move"          # client -> server: a move command such as "WQe2e5"
 STATE = "state"        # server -> client: the current game snapshot
 ASSIGNED = "assigned"  # server -> client: which colour this client plays
 REJECTED = "rejected"  # server -> client: a move was refused, with a reason
+EVENT = "event"        # server -> client: a one-shot notification (e.g. play a sound)
 
 
 @dataclass(frozen=True)
@@ -87,8 +88,36 @@ class Rejected:
         return cls(data["reason"])
 
 
+@dataclass(frozen=True)
+class Event:
+    """Server -> client: something just happened; react to it once (e.g. play a sound).
+
+    Sent *alongside* ``State``, not instead of it — the board's truth always comes from
+    a snapshot. ``kind`` is one of the ``config.SOUND_*`` names (``"move"``,
+    ``"capture"``, ``"game_start"``, ``"game_over"``): the same vocabulary
+    :class:`kfchess.graphics.sound.SoundEffects` already plays locally, so a client's own
+    sound player can act on ``kind`` directly with no further translation.
+    """
+
+    type: ClassVar[str] = EVENT
+    kind: str
+
+    def to_dict(self) -> dict:
+        return {"type": self.type, "kind": self.kind}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Event":
+        return cls(data["kind"])
+
+
 # Dispatch table: message tag -> the class that reads it.
-_BY_TYPE = {MOVE: Move, STATE: State, ASSIGNED: Assigned, REJECTED: Rejected}
+_BY_TYPE = {
+    MOVE: Move,
+    STATE: State,
+    ASSIGNED: Assigned,
+    REJECTED: Rejected,
+    EVENT: Event,
+}
 
 
 class ProtocolError(ValueError):

@@ -23,6 +23,7 @@ from kfchess.config import (  # noqa: E402
     SERVER_PORT,
     WHITE_PLAYER_NAME,
 )
+from kfchess.graphics.sound import WinsoundPlayer  # noqa: E402
 
 
 def main() -> None:
@@ -35,7 +36,12 @@ def main() -> None:
 
     net_client = NetClient()
     net_client.start(args.url)
-    build_thin_client_app(net_client, white_name=args.white, black_name=args.black).run()
+    # A real sound player here (silent by default in the app factory) so THIS player's
+    # own window beeps -- each client plays its own copy of whatever the server signals.
+    build_thin_client_app(
+        net_client, white_name=args.white, black_name=args.black,
+        sound_player=WinsoundPlayer(),
+    ).run()
 
 
 if __name__ == "__main__":

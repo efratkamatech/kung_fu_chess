@@ -20,7 +20,7 @@ import threading
 from typing import Optional
 
 from kfchess.model.color import Color
-from kfchess.protocol import Assigned, Rejected, State, decode
+from kfchess.protocol import Assigned, Event, Rejected, State, decode
 from kfchess.snapshot import GameSnapshot
 
 
@@ -33,6 +33,10 @@ class NetClient:
         self._color: Optional[Color] = None
         self._rejection: Optional[str] = None
         self._outgoing: "queue.Queue[str]" = queue.Queue()
+        # One-shot perception events (sound kinds) queued separately from the
+        # snapshot/colour/rejection state above: each is consumed exactly once by
+        # next_event(), not just "the latest value", since every one matters.
+        self._events: "queue.Queue[str]" = queue.Queue()
 
     def handle(self, text: str) -> None:
         """Process one incoming wire message: store the snapshot, colour, or rejection.
@@ -50,10 +54,20 @@ class NetClient:
                 self._color = message.color
             elif isinstance(message, Rejected):
                 self._rejection = message.reason
+            elif isinstance(message, Event):
+                self._events.put(message.kind)
 
     def queue_command(self, cmd: str) -> None:
         """Queue a move command (e.g. ``"WQe2e5"``) for the network thread to send."""
         self._outgoing.put(cmd)
+
+    def next_event(self) -> Optional[str]:
+        """The next queued sound-kind event (e.g. ``"capture"``), or ``None`` if none
+        are waiting. Called once per frame by the render loop to drain the queue."""
+        try:
+            return self._events.get_nowait()
+        except queue.Empty:
+            return None
 
     def next_command(self, timeout: Optional[float] = None) -> str:
         """Block until a queued command is available and return it (network thread)."""

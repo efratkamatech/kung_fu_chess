@@ -26,6 +26,7 @@ from kfchess.graphics.assets import AnimationBank
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
 from kfchess.graphics.renderer import BoardRenderer
+from kfchess.graphics.sound import SoundPlayer
 from kfchess.model.color import Color
 from kfchess.tokens import load_board_csv
 
@@ -35,6 +36,7 @@ def build_thin_client_app(
     white_name: str = WHITE_PLAYER_NAME,
     black_name: str = BLACK_PLAYER_NAME,
     window_name: str = "KungFu Chess (client)",
+    sound_player: SoundPlayer = None,
 ) -> ThinClientApp:
     """Assemble the thin client: renderer + snapshot HUD + click controller."""
     board = load_board_csv(BOARD_CSV)  # for window sizing only; pieces come from snapshots
@@ -67,4 +69,5 @@ def build_thin_client_app(
         cell_px=CELL_PX,
         board_x_offset=PANEL_PX,
         window_name=window_name,
+        sound_player=sound_player,
     )

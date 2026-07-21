@@ -2,7 +2,7 @@
 
 from kfchess.client.net_client import NetClient
 from kfchess.model.color import Color
-from kfchess.protocol import Assigned, Move, Rejected, State, encode
+from kfchess.protocol import Assigned, Event, Move, Rejected, State, encode
 from kfchess.snapshot import CellView, GameSnapshot
 
 
@@ -25,6 +25,7 @@ def test_starts_empty():
     assert client.latest() is None
     assert client.color is None
     assert client.take_rejection() is None
+    assert client.next_event() is None
 
 
 def test_a_state_message_becomes_the_latest_snapshot():
@@ -76,3 +77,19 @@ def test_queued_commands_come_back_out_in_order():
     client.queue_command("BPe7e5")
     assert client.next_command() == "WQe2e5"
     assert client.next_command() == "BPe7e5"
+
+
+def test_an_event_message_is_queued_for_next_event():
+    client = NetClient()
+    client.handle(encode(Event("capture")))
+    assert client.next_event() == "capture"
+    assert client.next_event() is None  # consumed, not just "latest"
+
+
+def test_multiple_events_come_back_out_in_order():
+    client = NetClient()
+    client.handle(encode(Event("move")))
+    client.handle(encode(Event("game_over")))
+    assert client.next_event() == "move"
+    assert client.next_event() == "game_over"
+    assert client.next_event() is None

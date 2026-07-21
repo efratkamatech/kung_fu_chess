@@ -1,10 +1,11 @@
 """Tests for the synchronous GameServer hub, driven with fake clients (no sockets)."""
 
+from kfchess.config import SOUND_CAPTURE, SOUND_GAME_OVER, SOUND_GAME_START, SOUND_MOVE
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
-from kfchess.protocol import Assigned, Move, Rejected, State, encode
+from kfchess.protocol import Assigned, Event, Move, Rejected, State, encode
 from kfchess.server.game_server import GameServer
 from kfchess.server.session import GameSession
 
@@ -26,6 +27,17 @@ def make_server():
     reg = standard_piece_types()
     grid = [
         [None, None, None],
+        [None, None, None],
+        [Piece(reg.get("R"), Color.WHITE), None, None],
+    ]
+    return GameServer(GameSession(Board.from_grid(grid)))
+
+
+def make_king_server():
+    """A hub over a 3x3 board: white rook at a1, black king at a3 (capturable)."""
+    reg = standard_piece_types()
+    grid = [
+        [Piece(reg.get("K"), Color.BLACK), None, None],
         [None, None, None],
         [Piece(reg.get("R"), Color.WHITE), None, None],
     ]
@@ -66,7 +78,7 @@ def test_a_legal_move_broadcasts_the_new_state_to_everyone():
     hub.receive(0, encode(Move("WRa1a3")))  # white's client id is 0
 
     assert isinstance(white.received[-1], State)
-    assert len(black.received) == before + 1  # black saw the move too
+    assert len(black.received) == before + 2  # black saw the move event AND the state
 
 
 def test_an_illegal_move_is_rejected_to_the_sender_only():
@@ -137,3 +149,76 @@ def test_tick_advances_and_broadcasts():
 
     assert len(white.received) == before + 1
     assert isinstance(white.received[-1], State)
+
+
+# --- immediate-reaction events (sound) ----------------------------------------
+
+def test_the_first_connecting_client_hears_the_game_started_event():
+    hub = make_server()
+    white = FakeClient()
+
+    hub.connect(white.send)
+
+    events = [m for m in white.received if isinstance(m, Event)]
+    assert events == [Event(SOUND_GAME_START)]
+
+
+def test_ticking_with_no_clients_does_not_discard_the_game_started_event():
+    # Regression: the background ticker calls tick() from server startup, before any
+    # client has connected. It must not drain (and so silently lose) the game-started
+    # event queued at session creation -- the first connecting client should still see it.
+    hub = make_server()
+    hub.tick(50)  # as if the ticker fired before anyone connected
+    hub.tick(50)
+    white = FakeClient()
+
+    hub.connect(white.send)
+
+    events = [m for m in white.received if isinstance(m, Event)]
+    assert events == [Event(SOUND_GAME_START)]
+
+
+def test_a_later_connecting_client_does_not_get_a_duplicate_game_started():
+    hub = make_server()
+    hub.connect(FakeClient().send)  # drains the one queued game-start event
+    black = FakeClient()
+
+    hub.connect(black.send)
+
+    assert not any(isinstance(m, Event) for m in black.received)
+
+
+def test_a_move_broadcasts_a_move_event_to_every_client_before_the_state():
+    hub = make_server()
+    white, black = FakeClient(), FakeClient()
+    hub.connect(white.send)
+    hub.connect(black.send)
+
+    hub.receive(0, encode(Move("WRa1a3")))
+
+    assert black.received[-2] == Event(SOUND_MOVE)
+    assert isinstance(black.received[-1], State)
+
+
+def test_an_illegal_move_broadcasts_no_event():
+    hub = make_server()
+    white = FakeClient()
+    hub.connect(white.send)
+    before = len(white.received)
+
+    hub.receive(0, encode(Move("WRa1b2")))  # illegal: rooks don't move diagonally
+
+    assert not any(isinstance(m, Event) for m in white.received[before:])
+
+
+def test_capturing_the_king_broadcasts_capture_then_game_over_events():
+    hub = make_king_server()
+    white = FakeClient()
+    hub.connect(white.send)
+
+    hub.receive(0, encode(Move("WRa1a3")))  # rook -> king
+    hub.tick(100000)                        # rook arrives and captures
+
+    events = [m for m in white.received if isinstance(m, Event)]
+    # the initial game-start, then this move's own event, then capture, then game-over
+    assert events[-2:] == [Event(SOUND_CAPTURE), Event(SOUND_GAME_OVER)]

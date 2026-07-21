@@ -15,10 +15,17 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from kfchess.app.bootstrap import build_game
+from kfchess.bus import topics
 from kfchess.bus.event_bus import EventBus
 from kfchess.bus.events import GameStarted
 from kfchess.bus.publisher import BusPublisher
-from kfchess.config import HUD_MOVES_VISIBLE
+from kfchess.config import (
+    HUD_MOVES_VISIBLE,
+    SOUND_CAPTURE,
+    SOUND_GAME_OVER,
+    SOUND_GAME_START,
+    SOUND_MOVE,
+)
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import PieceState
@@ -30,6 +37,17 @@ from kfchess.tokens import piece_token
 
 # The first player to join is white, the second is black (slide 4).
 _JOIN_ORDER = (Color.WHITE, Color.BLACK)
+
+# Bus topic -> the sound-kind name a client's SoundEffects already knows how to play
+# (config.SOUND_*, the same vocabulary graphics/sound.py uses locally). The server never
+# plays a sound itself -- it only forwards *which* effect happened, over the immediate
+# event channel, for whichever client is listening to render it.
+_SOUND_KIND_BY_TOPIC = {
+    topics.MOVE_STARTED: SOUND_MOVE,
+    topics.CAPTURE: SOUND_CAPTURE,
+    topics.GAME_STARTED: SOUND_GAME_START,
+    topics.GAME_OVER: SOUND_GAME_OVER,
+}
 
 
 class GameSession:
@@ -45,8 +63,24 @@ class GameSession:
         self._score.subscribe(bus)
         self._log.subscribe(bus)
         self._banner.subscribe(bus)
+        self._pending_events: List[str] = []
+        for topic, kind in _SOUND_KIND_BY_TOPIC.items():
+            bus.subscribe(topic, self._make_collector(kind))
         bus.publish(GameStarted())
         self._taken: List[Color] = []
+
+    def _make_collector(self, kind: str):
+        """A bus handler that queues ``kind`` for the next :meth:`drain_events`."""
+        return lambda event: self._pending_events.append(kind)
+
+    def drain_events(self) -> List[str]:
+        """The sound-kinds queued since the last call, clearing the queue.
+
+        Read by the server after every command and tick, so each perception event is
+        forwarded to clients exactly once.
+        """
+        events, self._pending_events = self._pending_events, []
+        return events
 
     def assign_color(self) -> Optional[Color]:
         """Hand the next joining player a colour (white, then black); ``None`` if full."""

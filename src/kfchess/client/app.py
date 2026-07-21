@@ -13,6 +13,7 @@ from __future__ import annotations
 from kfchess.config import HUD_TEXT_COLOR, PANEL_BG
 from kfchess.graphics.img import Img
 from kfchess.graphics.input import window_to_board
+from kfchess.graphics.sound import SoundPlayer
 from kfchess.model.position import Position
 from kfchess.client.controller import ClientController
 from kfchess.client.net_client import NetClient
@@ -36,6 +37,7 @@ class ThinClientApp:
         board_x_offset: int,
         window_name: str = "KungFu Chess (client)",
         frame_delay_ms: int = 16,
+        sound_player: SoundPlayer = None,
     ) -> None:
         self._net = net_client
         self._renderer = renderer
@@ -47,6 +49,8 @@ class ThinClientApp:
         self._board_x_offset = board_x_offset  # left panel width to subtract off clicks
         self._window_name = window_name
         self._frame_delay_ms = frame_delay_ms
+        # Immediate-reaction events (sound): silent by default, like build_graphics_app.
+        self._sound_player = sound_player if sound_player is not None else SoundPlayer()
 
     def _handle_click(self, canvas_x: int, canvas_y: int) -> None:
         """Turn a click (in canvas pixels) into a move command and queue it to send."""
@@ -71,10 +75,23 @@ class ThinClientApp:
         """The client quits on ESC or when the window is closed."""
         return key == _ESC_KEY or window_closed
 
+    def _play_pending_sounds(self) -> None:
+        """Drain every sound-kind event queued by the server and play it locally.
+
+        Called once per frame. These are one-shot notifications alongside the
+        snapshot, not part of it — see :class:`kfchess.protocol.Event`.
+        """
+        while True:
+            kind = self._net.next_event()
+            if kind is None:
+                return
+            self._sound_player.play(kind)
+
     def run(self) -> None:  # pragma: no cover  (real-time window/mouse loop)
         Img.create_window(self._window_name, resizable=True)
         Img.set_mouse_callback(self._window_name, self._on_mouse)
         while True:
+            self._play_pending_sounds()
             snapshot = self._net.latest()
             frame = (
                 self._compose_frame(snapshot)

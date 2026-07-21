@@ -19,6 +19,7 @@ from typing import Callable, Dict, Optional
 from kfchess.model.color import Color
 from kfchess.protocol import (
     Assigned,
+    Event,
     Move,
     Rejected,
     State,
@@ -44,6 +45,11 @@ class GameServer:
 
         Returns the client id used by :meth:`receive` and :meth:`disconnect`. A third
         client gets no colour (it can watch but not move — spectators arrive in M6).
+
+        Also flushes any events queued since the session was built straight to this
+        client (in practice, just the initial "game started" — so each player hears the
+        start sound the moment their own window connects, not before anyone was there
+        to hear it).
         """
         client_id = self._next_id
         self._next_id += 1
@@ -53,6 +59,8 @@ class GameServer:
             self._colors[client_id] = color
             send(encode(Assigned(color)))
         send(encode(State(self._session.snapshot())))
+        for kind in self._session.drain_events():
+            send(encode(Event(kind)))
         return client_id
 
     def receive(self, client_id: int, text: str) -> None:
@@ -71,6 +79,7 @@ class GameServer:
         if reason is not None:
             self._send_to(client_id, Rejected(reason))
         else:
+            self.broadcast_events()
             self.broadcast_state()
 
     def disconnect(self, client_id: int) -> None:
@@ -81,6 +90,7 @@ class GameServer:
     def tick(self, dt_ms: int) -> None:
         """Advance the game by ``dt_ms`` and broadcast the new state to everyone."""
         self._session.tick(dt_ms)
+        self.broadcast_events()
         self.broadcast_state()
 
     def broadcast_state(self) -> None:
@@ -88,6 +98,26 @@ class GameServer:
         text = encode(State(self._session.snapshot()))
         for send in self._sends.values():
             send(text)
+
+    def broadcast_events(self) -> None:
+        """Send every sound-kind event queued since the last drain to all clients.
+
+        Sent *alongside* the state broadcast, not instead of it — the board's truth
+        always comes from the snapshot; this is only a one-shot nudge ("play this
+        sound now") for whichever client has a local player wired to react to it.
+
+        With no clients connected, this deliberately does *not* drain the session's
+        queue: the background ticker calls this every tick regardless of connections,
+        and draining with nobody to send to would silently discard the event (in
+        particular, the initial "game started" event, queued before anyone has
+        connected) instead of leaving it for the next :meth:`connect` to deliver.
+        """
+        if not self._sends:
+            return
+        for kind in self._session.drain_events():
+            text = encode(Event(kind))
+            for send in self._sends.values():
+                send(text)
 
     def _send_to(self, client_id: int, message) -> None:
         send = self._sends.get(client_id)

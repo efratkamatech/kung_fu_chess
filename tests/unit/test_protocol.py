@@ -5,6 +5,7 @@ import pytest
 from kfchess.model.color import Color
 from kfchess.protocol import (
     Assigned,
+    Event,
     Move,
     ProtocolError,
     Rejected,
@@ -36,6 +37,7 @@ def a_snapshot():
         Assigned(Color.BLACK),
         Rejected("not_your_piece"),
         State(a_snapshot()),
+        Event("capture"),
     ],
 )
 def test_encode_then_decode_round_trips(message):
