@@ -11,6 +11,7 @@ from kfchess.protocol import (
     ProtocolError,
     Rejected,
     State,
+    Welcome,
     decode,
     encode,
 )
@@ -36,15 +37,21 @@ def a_snapshot():
     "message",
     [
         Move("WQe2e5"),
-        Login("Efrat"),
+        Login("Efrat", "secret"),
         Assigned(Color.BLACK),
-        Rejected("not_your_piece"),
+        Welcome(Color.WHITE, 1200),
+        Welcome(None, 1350),  # a spectator: no colour
+        Rejected("bad_password"),
         State(a_snapshot()),
         Event("capture"),
     ],
 )
 def test_encode_then_decode_round_trips(message):
     assert decode(encode(message)) == message
+
+
+def test_login_password_defaults_to_empty_when_absent():
+    assert decode('{"type": "login", "username": "Efrat"}') == Login("Efrat", "")
 
 
 def test_encode_produces_a_json_string():

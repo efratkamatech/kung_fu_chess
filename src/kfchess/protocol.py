@@ -15,17 +15,18 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 from kfchess.model.color import Color
 from kfchess.snapshot import GameSnapshot
 
 # --- Message type tags -------------------------------------------------------
 MOVE = "move"          # client -> server: a move command such as "WQe2e5"
-LOGIN = "login"        # client -> server: this client's chosen username
+LOGIN = "login"        # client -> server: this client's username + password
 STATE = "state"        # server -> client: the current game snapshot
 ASSIGNED = "assigned"  # server -> client: which colour this client plays
-REJECTED = "rejected"  # server -> client: a move was refused, with a reason
+WELCOME = "welcome"    # server -> client: login accepted; your colour + rating
+REJECTED = "rejected"  # server -> client: a move (or login) was refused, with a reason
 EVENT = "event"        # server -> client: a one-shot notification (e.g. play a sound)
 
 
@@ -46,21 +47,49 @@ class Move:
 
 @dataclass(frozen=True)
 class Login:
-    """Client -> server: identify this connection as ``username``.
+    """Client -> server: identify this connection as ``username`` with ``password``.
 
-    Sent once, right after connecting and before any move — the shell home screen
-    collects the name, then the client sends it as its very first message.
+    Sent right after connecting and before any move — the shell home screen collects the
+    credentials, then the client sends them. Resent (same connection) after a rejected
+    password so the player can try again.
     """
 
     type: ClassVar[str] = LOGIN
     username: str
+    password: str = ""
 
     def to_dict(self) -> dict:
-        return {"type": self.type, "username": self.username}
+        return {"type": self.type, "username": self.username, "password": self.password}
 
     @classmethod
     def from_dict(cls, data: dict) -> "Login":
-        return cls(data["username"])
+        return cls(data["username"], data.get("password", ""))
+
+
+@dataclass(frozen=True)
+class Welcome:
+    """Server -> client: login accepted. Carries the assigned ``color`` and ``rating``.
+
+    ``color`` is ``None`` for a spectator (no free seat). This is the unambiguous
+    "you're in" signal the client waits for before opening the window; a bad password
+    comes back as :class:`Rejected` instead.
+    """
+
+    type: ClassVar[str] = WELCOME
+    color: Optional[Color]
+    rating: int
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "color": None if self.color is None else self.color.value,
+            "rating": self.rating,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Welcome":
+        color = None if data["color"] is None else Color(data["color"])
+        return cls(color, data["rating"])
 
 
 @dataclass(frozen=True)
@@ -136,6 +165,7 @@ _BY_TYPE = {
     LOGIN: Login,
     STATE: State,
     ASSIGNED: Assigned,
+    WELCOME: Welcome,
     REJECTED: Rejected,
     EVENT: Event,
 }
