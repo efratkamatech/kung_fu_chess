@@ -272,3 +272,36 @@ def test_capturing_the_king_broadcasts_capture_then_game_over_events():
 
     events = of_type(white, Event)
     assert events[-2:] == [Event(SOUND_CAPTURE), Event(SOUND_GAME_OVER)]
+
+
+# --- ELO update on game over --------------------------------------------------
+
+def test_a_finished_game_updates_both_ratings_once_and_shows_them():
+    hub = make_king_server()
+    white, black = FakeClient(), FakeClient()
+    wid, bid = hub.connect(white.send), hub.connect(black.send)
+    login(hub, wid, "Efrat")   # white
+    login(hub, bid, "Dan")     # black
+
+    hub.receive(wid, encode(Move("WRa1a3")))  # rook -> black king
+    hub.tick(100000)                          # capture -> game over -> ELO update
+
+    assert hub._users.get_rating("Efrat") == 1216   # winner up
+    assert hub._users.get_rating("Dan") == 1184     # loser down
+    snapshot = of_type(white, State)[-1].snapshot
+    assert snapshot.ratings == {Color.WHITE: 1216, Color.BLACK: 1184}
+
+    hub.tick(100000)  # a further tick must not apply the update a second time
+    assert hub._users.get_rating("Efrat") == 1216
+
+
+def test_a_game_that_ends_without_two_known_players_is_not_rated():
+    hub = make_king_server()
+    white = FakeClient()
+    wid = hub.connect(white.send)
+    login(hub, wid, "Efrat")  # only white logged in; nobody is black
+
+    hub.receive(wid, encode(Move("WRa1a3")))
+    hub.tick(100000)          # white captures the unowned black king -> game over
+
+    assert hub._users.get_rating("Efrat") == START_RATING  # unrated: no opponent

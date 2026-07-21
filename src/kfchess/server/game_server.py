@@ -42,6 +42,7 @@ class GameServer:
         self._sends: Dict[int, Send] = {}       # client id -> its send callback
         self._colors: Dict[int, Color] = {}     # client id -> its colour (players only)
         self._next_id = 0
+        self._result_recorded = False           # so the ELO update runs exactly once
 
     def connect(self, send: Send) -> int:
         """Register a new client and send it the current state; no colour until login.
@@ -79,6 +80,7 @@ class GameServer:
         if reason is not None:
             self._send_to(client_id, Rejected(reason))
         else:
+            self._maybe_record_result()
             self.broadcast_events()
             self.broadcast_state()
 
@@ -115,8 +117,27 @@ class GameServer:
     def tick(self, dt_ms: int) -> None:
         """Advance the game by ``dt_ms`` and broadcast the new state to everyone."""
         self._session.tick(dt_ms)
+        self._maybe_record_result()
         self.broadcast_events()
         self.broadcast_state()
+
+    def _maybe_record_result(self) -> None:
+        """When the game has just ended, apply the ELO update once and show the new ratings.
+
+        Reads the winner and player names off a snapshot; skips rating a game that did
+        not have two known (logged-in) players. Persists both new ratings in the store
+        and writes them back onto the session so the next state broadcast shows them.
+        """
+        if self._result_recorded:
+            return
+        snapshot = self._session.snapshot()
+        if snapshot.winner is None or len(snapshot.names) < 2:
+            return
+        self._result_recorded = True
+        winner, loser = snapshot.winner, snapshot.winner.opponent
+        self._users.record_win(snapshot.names[winner], snapshot.names[loser])
+        self._session.set_rating(winner, self._users.get_rating(snapshot.names[winner]))
+        self._session.set_rating(loser, self._users.get_rating(snapshot.names[loser]))
 
     def broadcast_state(self) -> None:
         """Send the current snapshot to every connected client."""
