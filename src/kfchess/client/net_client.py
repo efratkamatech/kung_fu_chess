@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import queue
 import threading
-from typing import Optional
+from typing import Optional, Tuple
 
 from kfchess.model.color import Color
 from kfchess.protocol import Event, Rejected, State, Welcome, decode
 from kfchess.snapshot import GameSnapshot
+
+Credentials = Tuple[str, str]  # (username, password)
 
 
 class NetClient:
@@ -32,14 +34,17 @@ class NetClient:
         self._snapshot: Optional[GameSnapshot] = None
         self._color: Optional[Color] = None
         self._rating: Optional[int] = None
+        self._logged_in = False
         self._rejection: Optional[str] = None
         self._outgoing: "queue.Queue[str]" = queue.Queue()
         # One-shot perception events (sound kinds) queued separately from the
         # snapshot/colour/rejection state above: each is consumed exactly once by
         # next_event(), not just "the latest value", since every one matters.
         self._events: "queue.Queue[str]" = queue.Queue()
-        # The username to send as a Login message, once, right after connecting.
-        self._login_queue: "queue.Queue[str]" = queue.Queue()
+        # Credentials waiting to be sent as Login messages (one per login attempt).
+        self._login_queue: "queue.Queue[Credentials]" = queue.Queue()
+        # The outcome of each login attempt: None = accepted, else the refusal reason.
+        self._login_results: "queue.Queue[Optional[str]]" = queue.Queue()
 
     def handle(self, text: str) -> None:
         """Process one incoming wire message: store the snapshot, colour, or rejection.
@@ -56,8 +61,15 @@ class NetClient:
             elif isinstance(message, Welcome):
                 self._color = message.color
                 self._rating = message.rating
+                self._logged_in = True
+                self._login_results.put(None)  # login accepted
             elif isinstance(message, Rejected):
-                self._rejection = message.reason
+                # Before logging in, a rejection means the login was refused (bad
+                # password); after, it means a move was refused.
+                if self._logged_in:
+                    self._rejection = message.reason
+                else:
+                    self._login_results.put(message.reason)
             elif isinstance(message, Event):
                 self._events.put(message.kind)
 
@@ -65,16 +77,24 @@ class NetClient:
         """Queue a move command (e.g. ``"WQe2e5"``) for the network thread to send."""
         self._outgoing.put(cmd)
 
-    def login(self, username: str) -> None:
-        """Queue ``username`` to be sent as this connection's one Login message.
+    def login(self, username: str, password: str) -> None:
+        """Queue a login attempt; the network thread sends it as a Login message.
 
-        Call before :meth:`start` (or any time before the socket connects) — the
-        network thread sends it as the very first message once the connection opens.
+        May be called more than once (retry after a bad password) — each attempt's
+        outcome is reported by one :meth:`wait_for_login`.
         """
-        self._login_queue.put(username)
+        self._login_queue.put((username, password))
 
-    def next_login(self, timeout: Optional[float] = None) -> str:
-        """Block until a username is queued and return it (network thread)."""
+    def wait_for_login(self, timeout: Optional[float] = None) -> Optional[str]:
+        """Block until the server answers a login attempt.
+
+        Returns ``None`` if it was accepted, or the refusal reason (e.g.
+        ``"bad_password"``) if not — the caller can then prompt again and retry.
+        """
+        return self._login_results.get(timeout=timeout)
+
+    def next_login(self, timeout: Optional[float] = None) -> Credentials:
+        """Block until a login attempt is queued and return it (network thread)."""
         return self._login_queue.get(timeout=timeout)
 
     def next_event(self) -> Optional[str]:
@@ -132,17 +152,19 @@ class NetClient:
 
         async with websockets.connect(url) as websocket:
             loop = asyncio.get_event_loop()
-            username = await loop.run_in_executor(None, self.next_login)
-            await websocket.send(encode(Login(username)))
 
             async def receive() -> None:
                 async for text in websocket:
                     self.handle(text)
 
+            async def send_logins() -> None:
+                while True:
+                    username, password = await loop.run_in_executor(None, self.next_login)
+                    await websocket.send(encode(Login(username, password)))
+
             async def transmit() -> None:
-                loop = asyncio.get_event_loop()
                 while True:
                     cmd = await loop.run_in_executor(None, self._outgoing.get)
                     await websocket.send(encode(Move(cmd)))
 
-            await asyncio.gather(receive(), transmit())
+            await asyncio.gather(receive(), send_logins(), transmit())

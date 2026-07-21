@@ -1,14 +1,19 @@
-"""The shell home screen: ask the player for a username before the window opens.
+"""The shell home screen: log in with a username and password before the window opens.
 
-Slide 4's "Login with username... do it in a shell, not via GUI" -- kept as simple as
-the slide asks: no password yet (that's M4), just a name to show in the HUD instead of
-a hardcoded default. ``read_line`` is injected (defaults to the real ``input``) so the
-prompt loop is unit-tested without blocking on real stdin.
+Slide 4/5's "Login... do it in a shell, not via GUI." ``ask_username`` and
+``ask_credentials`` prompt in the shell; ``login_loop`` drives the whole handshake
+against a :class:`NetClient` — send the credentials, wait for the server's answer, and
+re-prompt on a bad password (on the same connection) until accepted.
+
+``read_line``, ``read_secret`` and ``notify`` are injected (defaulting to ``input``,
+``getpass``, and ``print``) so the prompt/retry logic is unit-tested without real stdin
+or a real socket.
 """
 
 from __future__ import annotations
 
-from typing import Callable
+import getpass
+from typing import Callable, Tuple
 
 ReadLine = Callable[[str], str]
 
@@ -19,3 +24,32 @@ def ask_username(read_line: ReadLine = input) -> str:
         name = read_line("Enter your username: ").strip()
         if name:
             return name
+
+
+def ask_credentials(
+    read_line: ReadLine = input, read_secret: ReadLine = getpass.getpass
+) -> Tuple[str, str]:
+    """Prompt for a username and a password (the password is read without echo)."""
+    username = ask_username(read_line)
+    password = read_secret("Enter your password: ")
+    return username, password
+
+
+def login_loop(
+    net,
+    read_line: ReadLine = input,
+    read_secret: ReadLine = getpass.getpass,
+    notify: Callable[[str], None] = print,
+) -> str:
+    """Prompt, log in, and retry on a bad password until accepted; return the username.
+
+    ``net`` is a NetClient (already connecting): each attempt calls ``net.login`` and
+    blocks on ``net.wait_for_login`` for the server's verdict.
+    """
+    while True:
+        username, password = ask_credentials(read_line, read_secret)
+        net.login(username, password)
+        reason = net.wait_for_login()
+        if reason is None:
+            return username
+        notify(f"Login failed: {reason}. Please try again.")

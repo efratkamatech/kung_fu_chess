@@ -59,8 +59,9 @@ def test_a_spectator_welcome_has_no_colour_but_still_a_rating():
     assert client.rating == 1200
 
 
-def test_a_rejection_is_reported_once_then_cleared():
+def test_a_move_rejection_after_login_is_reported_once_then_cleared():
     client = NetClient()
+    client.handle(encode(Welcome(Color.WHITE, 1200)))  # logged in first
     client.handle(encode(Rejected("illegal_move")))
     assert client.take_rejection() == "illegal_move"
     assert client.take_rejection() is None  # cleared on read
@@ -69,9 +70,21 @@ def test_a_rejection_is_reported_once_then_cleared():
 def test_garbage_messages_are_ignored():
     client = NetClient()
     client.handle("not json")
-    client.handle(encode(Rejected("x")))  # a real message, keeps working after garbage
-    assert client.latest() is None
-    assert client.take_rejection() == "x"
+    client.handle(encode(State(a_snapshot())))  # a real message still works after garbage
+    assert client.latest() is not None
+
+
+def test_a_welcome_reports_login_success():
+    client = NetClient()
+    client.handle(encode(Welcome(Color.WHITE, 1200)))
+    assert client.wait_for_login() is None  # accepted
+
+
+def test_a_rejection_before_login_is_a_login_failure():
+    client = NetClient()
+    client.handle(encode(Rejected("bad_password")))
+    assert client.wait_for_login() == "bad_password"  # not a move rejection
+    assert client.take_rejection() is None            # so the move-rejection slot stays clear
 
 
 def test_an_unexpected_message_type_is_ignored():
@@ -92,8 +105,8 @@ def test_queued_commands_come_back_out_in_order():
 
 def test_a_queued_login_is_available_to_the_network_thread():
     client = NetClient()
-    client.login("Efrat")
-    assert client.next_login() == "Efrat"
+    client.login("Efrat", "secret")
+    assert client.next_login() == ("Efrat", "secret")
 
 
 def test_an_event_message_is_queued_for_next_event():
