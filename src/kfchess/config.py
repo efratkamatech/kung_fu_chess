@@ -134,6 +134,13 @@ SERVER_PORT = 8765
 # keeps in-flight motion looking smooth on the clients.
 SERVER_TICK_MS = 50
 
+# --- Accounts and rating (server-side, persisted in SQLite) ------------------
+# Where the users database lives (username, password hash, rating). Resolved at the
+# repo root so it survives across server runs. (git-ignored; not game art.)
+USERS_DB = ASSETS_DIR.parent / "users.db"
+START_RATING = 1200   # every new account starts here
+ELO_K = 32            # the ELO K-factor: the most a single game can move a rating
+
 # --- Sound effects (played in reaction to bus events) ------------------------
 # Effect names: the SoundEffects subscriber plays one of these per game event.
 SOUND_MOVE = "move"
