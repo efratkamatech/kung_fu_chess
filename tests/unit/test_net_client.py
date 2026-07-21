@@ -80,6 +80,12 @@ def test_queued_commands_come_back_out_in_order():
     assert client.next_command() == "BPe7e5"
 
 
+def test_a_queued_login_is_available_to_the_network_thread():
+    client = NetClient()
+    client.login("Efrat")
+    assert client.next_login() == "Efrat"
+
+
 def test_an_event_message_is_queued_for_next_event():
     client = NetClient()
     client.handle(encode(Event("capture")))

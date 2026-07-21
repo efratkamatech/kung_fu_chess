@@ -37,6 +37,8 @@ class NetClient:
         # snapshot/colour/rejection state above: each is consumed exactly once by
         # next_event(), not just "the latest value", since every one matters.
         self._events: "queue.Queue[str]" = queue.Queue()
+        # The username to send as a Login message, once, right after connecting.
+        self._login_queue: "queue.Queue[str]" = queue.Queue()
 
     def handle(self, text: str) -> None:
         """Process one incoming wire message: store the snapshot, colour, or rejection.
@@ -60,6 +62,18 @@ class NetClient:
     def queue_command(self, cmd: str) -> None:
         """Queue a move command (e.g. ``"WQe2e5"``) for the network thread to send."""
         self._outgoing.put(cmd)
+
+    def login(self, username: str) -> None:
+        """Queue ``username`` to be sent as this connection's one Login message.
+
+        Call before :meth:`start` (or any time before the socket connects) — the
+        network thread sends it as the very first message once the connection opens.
+        """
+        self._login_queue.put(username)
+
+    def next_login(self, timeout: Optional[float] = None) -> str:
+        """Block until a username is queued and return it (network thread)."""
+        return self._login_queue.get(timeout=timeout)
 
     def next_event(self) -> Optional[str]:
         """The next queued sound-kind event (e.g. ``"capture"``), or ``None`` if none
@@ -106,9 +120,12 @@ class NetClient:
 
         import websockets
 
-        from kfchess.protocol import Move, encode
+        from kfchess.protocol import Login, Move, encode
 
         async with websockets.connect(url) as websocket:
+            loop = asyncio.get_event_loop()
+            username = await loop.run_in_executor(None, self.next_login)
+            await websocket.send(encode(Login(username)))
 
             async def receive() -> None:
                 async for text in websocket:

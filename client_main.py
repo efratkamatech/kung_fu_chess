@@ -4,8 +4,9 @@ Run it from the project root (with the graphics deps and the server extra instal
 
     python client_main.py --url ws://localhost:8765
 
-The first client to connect plays white, the second black; later clients watch. The
-window draws whatever the server sends and turns your clicks into move commands.
+It first asks for your username in the shell, then opens the window. The first client
+to connect plays white, the second black; later clients watch. The window draws
+whatever the server sends and turns your clicks into move commands.
 """
 
 import argparse
@@ -16,13 +17,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from kfchess.client.bootstrap import build_thin_client_app  # noqa: E402
+from kfchess.client.home_screen import ask_username  # noqa: E402
 from kfchess.client.net_client import NetClient  # noqa: E402
-from kfchess.config import (  # noqa: E402
-    BLACK_PLAYER_NAME,
-    SERVER_HOST,
-    SERVER_PORT,
-    WHITE_PLAYER_NAME,
-)
+from kfchess.config import SERVER_HOST, SERVER_PORT  # noqa: E402
 from kfchess.graphics.sound import WinsoundPlayer  # noqa: E402
 
 
@@ -30,18 +27,16 @@ def main() -> None:
     default_url = f"ws://{SERVER_HOST}:{SERVER_PORT}"
     parser = argparse.ArgumentParser(description="KungFu Chess (network client).")
     parser.add_argument("--url", default=default_url, help="server WebSocket URL")
-    parser.add_argument("--white", default=WHITE_PLAYER_NAME, help="white player's name")
-    parser.add_argument("--black", default=BLACK_PLAYER_NAME, help="black player's name")
     args = parser.parse_args()
 
+    username = ask_username()  # the shell home screen (slide 4)
+
     net_client = NetClient()
+    net_client.login(username)  # queued; sent as the first message once connected
     net_client.start(args.url)
     # A real sound player here (silent by default in the app factory) so THIS player's
     # own window beeps -- each client plays its own copy of whatever the server signals.
-    build_thin_client_app(
-        net_client, white_name=args.white, black_name=args.black,
-        sound_player=WinsoundPlayer(),
-    ).run()
+    build_thin_client_app(net_client, sound_player=WinsoundPlayer()).run()
 
 
 if __name__ == "__main__":

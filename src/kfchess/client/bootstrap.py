@@ -43,10 +43,13 @@ def build_thin_client_app(
     board_w, board_h = board_pixel_size(board, CELL_PX)
 
     hud_source = SnapshotHudSource()
-    black_hud = Hud(black_name, Color.BLACK, hud_source, hud_source, left_x=20)
+    black_hud = Hud(
+        black_name, Color.BLACK, hud_source, hud_source, left_x=20,
+        name_source=hud_source,
+    )
     white_hud = Hud(
         white_name, Color.WHITE, hud_source, hud_source,
-        left_x=PANEL_PX + board_w + 20,
+        left_x=PANEL_PX + board_w + 20, name_source=hud_source,
     )
     renderer = BoardRenderer(
         BOARD_IMAGE,

@@ -30,3 +30,28 @@ def test_hud_draw_writes_name_score_and_moves_onto_the_canvas():
     hud.draw(canvas)
 
     assert not np.array_equal(before, canvas.img)  # text (name / score / a move) was drawn
+
+
+class FakeNameSource:
+    def __init__(self, name):
+        self._name = name
+
+    def name(self, color):
+        return self._name
+
+
+def a_hud(name_source=None):
+    return Hud("White", Color.WHITE, MovesLog(8), ScoreBoard(), left_x=20,
+               name_source=name_source)
+
+
+def test_display_name_uses_the_default_when_there_is_no_name_source():
+    assert a_hud()._display_name() == "White"
+
+
+def test_display_name_uses_the_source_name_when_it_has_one():
+    assert a_hud(FakeNameSource("Efrat"))._display_name() == "Efrat"
+
+
+def test_display_name_falls_back_to_the_default_until_a_name_arrives():
+    assert a_hud(FakeNameSource(None))._display_name() == "White"

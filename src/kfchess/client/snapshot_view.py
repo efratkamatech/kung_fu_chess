@@ -90,3 +90,12 @@ class SnapshotHudSource:
         if self._snapshot is None:
             return []
         return self._snapshot.logs.get(color, [])[-count:]
+
+    def name(self, color: Color) -> Optional[str]:
+        """The player's chosen name for ``color``, or ``None`` if not logged in yet.
+
+        ``None`` lets the HUD fall back to its default label until a Login arrives.
+        """
+        if self._snapshot is None:
+            return None
+        return self._snapshot.names.get(color)
