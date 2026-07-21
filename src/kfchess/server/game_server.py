@@ -20,6 +20,7 @@ from kfchess.model.color import Color
 from kfchess.protocol import (
     Assigned,
     Event,
+    Login,
     Move,
     Rejected,
     State,
@@ -64,13 +65,16 @@ class GameServer:
         return client_id
 
     def receive(self, client_id: int, text: str) -> None:
-        """Handle one wire message from a client. Non-moves and garbage are ignored."""
+        """Handle one wire message from a client. Unrecognised messages are ignored."""
         try:
             message = decode(text)
         except ValueError:
             return  # not valid JSON, or an unknown message type — drop it
+        if isinstance(message, Login):
+            self._on_login(client_id, message.username)
+            return
         if not isinstance(message, Move):
-            return  # only move commands come from clients in M2
+            return  # nothing else comes from a client
         color = self._colors.get(client_id)
         if color is None:
             self._send_to(client_id, Rejected("not_a_player"))
@@ -81,6 +85,20 @@ class GameServer:
         else:
             self.broadcast_events()
             self.broadcast_state()
+
+    def _on_login(self, client_id: int, username: str) -> None:
+        """Record ``username`` for whichever colour ``client_id`` plays, if any.
+
+        A spectator (no assigned colour) has nowhere for a name to show yet, so its
+        Login is silently ignored — spectator identity arrives with rooms in M6. The
+        name is part of the game's *state* (like score), so it goes out on the next
+        state broadcast rather than the immediate-event channel.
+        """
+        color = self._colors.get(client_id)
+        if color is None:
+            return
+        self._session.set_name(color, username)
+        self.broadcast_state()
 
     def disconnect(self, client_id: int) -> None:
         """Forget a client that has left."""

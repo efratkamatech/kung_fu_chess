@@ -5,7 +5,7 @@ from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
-from kfchess.protocol import Assigned, Event, Move, Rejected, State, encode
+from kfchess.protocol import Assigned, Event, Login, Move, Rejected, State, encode
 from kfchess.server.game_server import GameServer
 from kfchess.server.session import GameSession
 
@@ -222,3 +222,43 @@ def test_capturing_the_king_broadcasts_capture_then_game_over_events():
     events = [m for m in white.received if isinstance(m, Event)]
     # the initial game-start, then this move's own event, then capture, then game-over
     assert events[-2:] == [Event(SOUND_CAPTURE), Event(SOUND_GAME_OVER)]
+
+
+# --- login (names) -------------------------------------------------------------
+
+def test_a_login_records_the_name_and_broadcasts_it_to_everyone():
+    hub = make_server()
+    white, black = FakeClient(), FakeClient()
+    hub.connect(white.send)
+    hub.connect(black.send)
+
+    hub.receive(0, encode(Login("Efrat")))  # white's client id is 0
+
+    states = [m for m in black.received if isinstance(m, State)]
+    assert states[-1].snapshot.names == {Color.WHITE: "Efrat"}
+
+
+def test_a_login_from_a_spectator_is_ignored():
+    hub = make_server()
+    hub.connect(FakeClient().send)
+    hub.connect(FakeClient().send)
+    watcher = FakeClient()
+    hub.connect(watcher.send)  # id 2, no colour
+    before = len(watcher.received)
+
+    hub.receive(2, encode(Login("Someone")))
+
+    assert len(watcher.received) == before  # nothing sent back, no broadcast triggered
+
+
+def test_a_second_login_updates_the_other_colour_without_losing_the_first():
+    hub = make_server()
+    white, black = FakeClient(), FakeClient()
+    hub.connect(white.send)
+    hub.connect(black.send)
+
+    hub.receive(0, encode(Login("Efrat")))
+    hub.receive(1, encode(Login("Dan")))
+
+    states = [m for m in white.received if isinstance(m, State)]
+    assert states[-1].snapshot.names == {Color.WHITE: "Efrat", Color.BLACK: "Dan"}
