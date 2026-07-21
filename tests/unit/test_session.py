@@ -77,6 +77,25 @@ def test_a_malformed_command_is_refused_with_a_reason():
     assert session.apply_command(Color.WHITE, "junk!!") is not None
 
 
+# --- names ---------------------------------------------------------------------
+
+def test_a_fresh_session_has_no_names_yet():
+    assert rook_session().snapshot().names == {}
+
+
+def test_set_name_records_a_players_name_by_colour():
+    session = rook_session()
+    session.set_name(Color.WHITE, "Efrat")
+    assert session.snapshot().names == {Color.WHITE: "Efrat"}
+
+
+def test_only_the_colours_that_logged_in_appear_in_names():
+    session = rook_session()
+    session.set_name(Color.WHITE, "Efrat")
+    session.set_name(Color.BLACK, "Dan")
+    assert session.snapshot().names == {Color.WHITE: "Efrat", Color.BLACK: "Dan"}
+
+
 # --- snapshots ---------------------------------------------------------------
 
 def test_a_fresh_snapshot_shows_the_start_phase_and_the_pieces():

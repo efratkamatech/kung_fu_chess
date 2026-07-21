@@ -6,6 +6,7 @@ from kfchess.model.color import Color
 from kfchess.protocol import (
     Assigned,
     Event,
+    Login,
     Move,
     ProtocolError,
     Rejected,
@@ -24,6 +25,7 @@ def a_snapshot():
         moving=[],
         scores={Color.WHITE: 0, Color.BLACK: 0},
         logs={Color.WHITE: [], Color.BLACK: []},
+        names={},
         phase="playing",
         winner=None,
         now_ms=0,
@@ -34,6 +36,7 @@ def a_snapshot():
     "message",
     [
         Move("WQe2e5"),
+        Login("Efrat"),
         Assigned(Color.BLACK),
         Rejected("not_your_piece"),
         State(a_snapshot()),

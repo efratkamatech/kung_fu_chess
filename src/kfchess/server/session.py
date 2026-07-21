@@ -68,6 +68,7 @@ class GameSession:
             bus.subscribe(topic, self._make_collector(kind))
         bus.publish(GameStarted())
         self._taken: List[Color] = []
+        self._names: Dict[Color, str] = {}
 
     def _make_collector(self, kind: str):
         """A bus handler that queues ``kind`` for the next :meth:`drain_events`."""
@@ -89,6 +90,10 @@ class GameSession:
         color = _JOIN_ORDER[len(self._taken)]
         self._taken.append(color)
         return color
+
+    def set_name(self, color: Color, username: str) -> None:
+        """Record ``username`` as the display name for ``color`` (from a Login message)."""
+        self._names[color] = username
 
     def apply_command(self, color: Color, cmd: str) -> Optional[str]:
         """Apply a move command from ``color``.
@@ -139,6 +144,7 @@ class GameSession:
                 color: self._log.recent(color, HUD_MOVES_VISIBLE)
                 for color in _JOIN_ORDER
             },
+            names=dict(self._names),  # only colours that have logged in so far
             phase=self._banner.phase,
             winner=self._engine.winner,
             now_ms=self._engine.now_ms,

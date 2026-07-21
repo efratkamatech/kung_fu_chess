@@ -48,6 +48,7 @@ def a_snapshot(winner=None):
         moving=[],
         scores={Color.WHITE: 0, Color.BLACK: 0},
         logs={Color.WHITE: [], Color.BLACK: []},
+        names={},
         phase="playing",
         winner=winner,
         now_ms=0,

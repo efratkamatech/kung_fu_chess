@@ -48,6 +48,7 @@ class GameSnapshot:
     moving: List[MovingView]
     scores: Dict[Color, int]
     logs: Dict[Color, List[str]]
+    names: Dict[Color, str]                # only colours that have logged in so far
     phase: str                             # "start" / "playing" / "over"
     winner: Optional[Color]
     now_ms: int
@@ -75,6 +76,7 @@ class GameSnapshot:
             ],
             "scores": {color.value: value for color, value in self.scores.items()},
             "logs": {color.value: lines for color, lines in self.logs.items()},
+            "names": {color.value: name for color, name in self.names.items()},
             "phase": self.phase,
             "winner": None if self.winner is None else self.winner.value,
             "now_ms": self.now_ms,
@@ -95,6 +97,7 @@ class GameSnapshot:
         moving = [MovingView(m["token"], m["row"], m["col"]) for m in data["moving"]]
         scores = {Color(prefix): value for prefix, value in data["scores"].items()}
         logs = {Color(prefix): lines for prefix, lines in data["logs"].items()}
+        names = {Color(prefix): name for prefix, name in data["names"].items()}
         winner = None if data["winner"] is None else Color(data["winner"])
         return cls(
             rows=data["rows"],
@@ -103,6 +106,7 @@ class GameSnapshot:
             moving=moving,
             scores=scores,
             logs=logs,
+            names=names,
             phase=data["phase"],
             winner=winner,
             now_ms=data["now_ms"],

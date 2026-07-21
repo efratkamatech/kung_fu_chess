@@ -14,6 +14,7 @@ def snapshot_with(cells):
         moving=[],
         scores={Color.WHITE: 0, Color.BLACK: 0},
         logs={Color.WHITE: [], Color.BLACK: []},
+        names={},
         phase="playing",
         winner=None,
         now_ms=0,

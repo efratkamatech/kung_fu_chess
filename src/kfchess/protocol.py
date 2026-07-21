@@ -22,6 +22,7 @@ from kfchess.snapshot import GameSnapshot
 
 # --- Message type tags -------------------------------------------------------
 MOVE = "move"          # client -> server: a move command such as "WQe2e5"
+LOGIN = "login"        # client -> server: this client's chosen username
 STATE = "state"        # server -> client: the current game snapshot
 ASSIGNED = "assigned"  # server -> client: which colour this client plays
 REJECTED = "rejected"  # server -> client: a move was refused, with a reason
@@ -41,6 +42,25 @@ class Move:
     @classmethod
     def from_dict(cls, data: dict) -> "Move":
         return cls(data["cmd"])
+
+
+@dataclass(frozen=True)
+class Login:
+    """Client -> server: identify this connection as ``username``.
+
+    Sent once, right after connecting and before any move — the shell home screen
+    collects the name, then the client sends it as its very first message.
+    """
+
+    type: ClassVar[str] = LOGIN
+    username: str
+
+    def to_dict(self) -> dict:
+        return {"type": self.type, "username": self.username}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Login":
+        return cls(data["username"])
 
 
 @dataclass(frozen=True)
@@ -113,6 +133,7 @@ class Event:
 # Dispatch table: message tag -> the class that reads it.
 _BY_TYPE = {
     MOVE: Move,
+    LOGIN: Login,
     STATE: State,
     ASSIGNED: Assigned,
     REJECTED: Rejected,

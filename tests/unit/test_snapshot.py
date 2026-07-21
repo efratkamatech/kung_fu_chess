@@ -1,6 +1,7 @@
 """Tests for GameSnapshot: it survives a round-trip to JSON and back unchanged."""
 
 import json
+from dataclasses import replace
 
 from kfchess.model.color import Color
 from kfchess.snapshot import CellView, GameSnapshot, MovingView
@@ -17,6 +18,7 @@ def a_snapshot(winner=Color.WHITE):
         moving=[MovingView("wP", row=1.5, col=0.0)],
         scores={Color.WHITE: 9, Color.BLACK: 0},
         logs={Color.WHITE: ["wP a2 -> a4", "x bN"], Color.BLACK: []},
+        names={Color.WHITE: "Efrat", Color.BLACK: "Dan"},
         phase="playing",
         winner=winner,
         now_ms=1234,
@@ -44,3 +46,9 @@ def test_a_drawn_game_has_no_winner():
     restored = GameSnapshot.from_dict(json.loads(json.dumps(snapshot.to_dict())))
     assert restored.winner is None
     assert restored == snapshot
+
+
+def test_a_sparse_names_dict_round_trips_when_only_one_side_has_logged_in():
+    snapshot = replace(a_snapshot(), names={Color.WHITE: "Efrat"})
+    restored = GameSnapshot.from_dict(json.loads(json.dumps(snapshot.to_dict())))
+    assert restored.names == {Color.WHITE: "Efrat"}  # black has not logged in yet

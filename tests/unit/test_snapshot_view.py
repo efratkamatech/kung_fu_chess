@@ -18,6 +18,7 @@ def a_snapshot():
         moving=[MovingView("wP", row=1.5, col=0.0)],
         scores={Color.WHITE: 9, Color.BLACK: 0},
         logs={Color.WHITE: ["wP a2 -> a4", "x bN"], Color.BLACK: []},
+        names={},
         phase="playing",
         winner=None,
         now_ms=5,
