@@ -2,7 +2,7 @@
 
 from kfchess.client.net_client import NetClient
 from kfchess.model.color import Color
-from kfchess.protocol import Assigned, Event, Move, Rejected, State, encode
+from kfchess.protocol import Event, Move, Rejected, State, Welcome, encode
 from kfchess.snapshot import CellView, GameSnapshot
 
 
@@ -15,6 +15,7 @@ def a_snapshot(now_ms=7):
         scores={Color.WHITE: 0, Color.BLACK: 0},
         logs={Color.WHITE: [], Color.BLACK: []},
         names={},
+        ratings={},
         phase="playing",
         winner=None,
         now_ms=now_ms,
@@ -25,6 +26,7 @@ def test_starts_empty():
     client = NetClient()
     assert client.latest() is None
     assert client.color is None
+    assert client.rating is None
     assert client.take_rejection() is None
     assert client.next_event() is None
 
@@ -43,10 +45,18 @@ def test_a_later_state_replaces_the_earlier_one():
     assert client.latest().now_ms == 2
 
 
-def test_an_assigned_message_sets_the_colour():
+def test_a_welcome_sets_the_colour_and_rating():
     client = NetClient()
-    client.handle(encode(Assigned(Color.BLACK)))
+    client.handle(encode(Welcome(Color.BLACK, 1234)))
     assert client.color is Color.BLACK
+    assert client.rating == 1234
+
+
+def test_a_spectator_welcome_has_no_colour_but_still_a_rating():
+    client = NetClient()
+    client.handle(encode(Welcome(None, 1200)))
+    assert client.color is None
+    assert client.rating == 1200
 
 
 def test_a_rejection_is_reported_once_then_cleared():

@@ -96,6 +96,16 @@ def test_only_the_colours_that_logged_in_appear_in_names():
     assert session.snapshot().names == {Color.WHITE: "Efrat", Color.BLACK: "Dan"}
 
 
+def test_a_fresh_session_has_no_ratings_yet():
+    assert rook_session().snapshot().ratings == {}
+
+
+def test_set_rating_records_a_rating_by_colour():
+    session = rook_session()
+    session.set_rating(Color.WHITE, 1234)
+    assert session.snapshot().ratings == {Color.WHITE: 1234}
+
+
 # --- snapshots ---------------------------------------------------------------
 
 def test_a_fresh_snapshot_shows_the_start_phase_and_the_pieces():

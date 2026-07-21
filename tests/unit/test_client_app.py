@@ -49,6 +49,7 @@ def a_snapshot(winner=None):
         scores={Color.WHITE: 0, Color.BLACK: 0},
         logs={Color.WHITE: [], Color.BLACK: []},
         names={},
+        ratings={},
         phase="playing",
         winner=winner,
         now_ms=0,

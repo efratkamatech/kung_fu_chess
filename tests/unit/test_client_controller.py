@@ -15,6 +15,7 @@ def snapshot_with(cells):
         scores={Color.WHITE: 0, Color.BLACK: 0},
         logs={Color.WHITE: [], Color.BLACK: []},
         names={},
+        ratings={},
         phase="playing",
         winner=None,
         now_ms=0,

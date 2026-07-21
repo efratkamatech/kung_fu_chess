@@ -15,30 +15,33 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.model.position import Position
-from kfchess.protocol import Move, encode
+from kfchess.protocol import Login, Move, encode
 from kfchess.server.game_server import GameServer
 from kfchess.server.session import GameSession
+from kfchess.server.user_store import UserStore
 
 
 def wire_two_clients():
-    """A hub over a lone white rook at a1, with white and black NetClients attached."""
+    """A hub over a lone white rook at a1, with white and black NetClients logged in."""
     reg = standard_piece_types()
     grid = [
         [None, None, None],
         [None, None, None],
         [Piece(reg.get("R"), Color.WHITE), None, None],
     ]
-    hub = GameServer(GameSession(Board.from_grid(grid)))
+    hub = GameServer(GameSession(Board.from_grid(grid)), UserStore(":memory:"))
     white, black = NetClient(), NetClient()
     white_id = hub.connect(white.handle)  # the hub sends wire text straight to handle
     black_id = hub.connect(black.handle)
+    hub.receive(white_id, encode(Login("Efrat", "pw")))  # first login -> white
+    hub.receive(black_id, encode(Login("Dan", "pw")))    # second login -> black
     return hub, white, black, white_id, black_id
 
 
 def test_a_move_by_white_reaches_black_through_the_server():
     hub, white, black, white_id, _ = wire_two_clients()
 
-    # Each client learned its colour and got an initial snapshot on connect.
+    # Each client learned its colour (from Welcome) and has a snapshot.
     assert white.color is Color.WHITE
     assert black.color is Color.BLACK
     assert white.latest() is not None and black.latest() is not None

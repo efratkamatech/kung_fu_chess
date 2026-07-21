@@ -18,16 +18,17 @@ from typing import Callable, Dict, Optional
 
 from kfchess.model.color import Color
 from kfchess.protocol import (
-    Assigned,
     Event,
     Login,
     Move,
     Rejected,
     State,
+    Welcome,
     decode,
     encode,
 )
 from kfchess.server.session import GameSession
+from kfchess.server.user_store import UserStore
 
 Send = Callable[[str], None]  # how the hub pushes one wire string to one client
 
@@ -35,30 +36,25 @@ Send = Callable[[str], None]  # how the hub pushes one wire string to one client
 class GameServer:
     """A synchronous hub over one :class:`GameSession`; clients are ``send`` callbacks."""
 
-    def __init__(self, session: GameSession) -> None:
+    def __init__(self, session: GameSession, users: UserStore) -> None:
         self._session = session
+        self._users = users
         self._sends: Dict[int, Send] = {}       # client id -> its send callback
         self._colors: Dict[int, Color] = {}     # client id -> its colour (players only)
         self._next_id = 0
 
     def connect(self, send: Send) -> int:
-        """Register a new client. Assign a colour if free, then send it the state.
+        """Register a new client and send it the current state; no colour until login.
 
-        Returns the client id used by :meth:`receive` and :meth:`disconnect`. A third
-        client gets no colour (it can watch but not move — spectators arrive in M6).
+        Returns the client id used by :meth:`receive` and :meth:`disconnect`. Colour is
+        assigned only after a successful login (so a wrong password can't hold a seat).
 
         Also flushes any events queued since the session was built straight to this
-        client (in practice, just the initial "game started" — so each player hears the
-        start sound the moment their own window connects, not before anyone was there
-        to hear it).
+        client (in practice, just the initial "game started").
         """
         client_id = self._next_id
         self._next_id += 1
         self._sends[client_id] = send
-        color = self._session.assign_color()
-        if color is not None:
-            self._colors[client_id] = color
-            send(encode(Assigned(color)))
         send(encode(State(self._session.snapshot())))
         for kind in self._session.drain_events():
             send(encode(Event(kind)))
@@ -71,7 +67,7 @@ class GameServer:
         except ValueError:
             return  # not valid JSON, or an unknown message type — drop it
         if isinstance(message, Login):
-            self._on_login(client_id, message.username)
+            self._on_login(client_id, message.username, message.password)
             return
         if not isinstance(message, Move):
             return  # nothing else comes from a client
@@ -86,18 +82,29 @@ class GameServer:
             self.broadcast_events()
             self.broadcast_state()
 
-    def _on_login(self, client_id: int, username: str) -> None:
-        """Record ``username`` for whichever colour ``client_id`` plays, if any.
+    def _on_login(self, client_id: int, username: str, password: str) -> None:
+        """Authenticate ``client_id`` and, on success, seat and welcome the player.
 
-        A spectator (no assigned colour) has nowhere for a name to show yet, so its
-        Login is silently ignored — spectator identity arrives with rooms in M6. The
-        name is part of the game's *state* (like score), so it goes out on the next
-        state broadcast rather than the immediate-event channel.
+        The username is registered on first sight (at the starting rating) or verified
+        against its stored password; a mismatch is refused with ``Rejected`` and the
+        client may try again on the same connection. On success we assign a colour if a
+        seat is free (else the player watches as a spectator), record their name and
+        rating on the session (game *state*, broadcast to everyone), and send them a
+        ``Welcome`` — the signal their window waits for before opening.
         """
+        rating = self._users.register_or_login(username, password)
+        if rating is None:
+            self._send_to(client_id, Rejected("bad_password"))
+            return
         color = self._colors.get(client_id)
         if color is None:
-            return
-        self._session.set_name(color, username)
+            color = self._session.assign_color()  # may be None (a spectator seat)
+            if color is not None:
+                self._colors[client_id] = color
+        if color is not None:
+            self._session.set_name(color, username)
+            self._session.set_rating(color, rating)
+        self._send_to(client_id, Welcome(color, rating))
         self.broadcast_state()
 
     def disconnect(self, client_id: int) -> None:
@@ -165,7 +172,7 @@ async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
     host = host or SERVER_HOST
     port = port or SERVER_PORT
     tick_ms = tick_ms or SERVER_TICK_MS
-    hub = GameServer(GameSession(board))
+    hub = GameServer(GameSession(board), UserStore())
 
     async def drain(queue: "asyncio.Queue", websocket) -> None:
         while True:

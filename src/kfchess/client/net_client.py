@@ -20,7 +20,7 @@ import threading
 from typing import Optional
 
 from kfchess.model.color import Color
-from kfchess.protocol import Assigned, Event, Rejected, State, decode
+from kfchess.protocol import Event, Rejected, State, Welcome, decode
 from kfchess.snapshot import GameSnapshot
 
 
@@ -31,6 +31,7 @@ class NetClient:
         self._lock = threading.Lock()
         self._snapshot: Optional[GameSnapshot] = None
         self._color: Optional[Color] = None
+        self._rating: Optional[int] = None
         self._rejection: Optional[str] = None
         self._outgoing: "queue.Queue[str]" = queue.Queue()
         # One-shot perception events (sound kinds) queued separately from the
@@ -52,8 +53,9 @@ class NetClient:
         with self._lock:
             if isinstance(message, State):
                 self._snapshot = message.snapshot
-            elif isinstance(message, Assigned):
+            elif isinstance(message, Welcome):
                 self._color = message.color
+                self._rating = message.rating
             elif isinstance(message, Rejected):
                 self._rejection = message.reason
             elif isinstance(message, Event):
@@ -97,6 +99,12 @@ class NetClient:
         """The colour the server assigned this client, or ``None`` if not a player."""
         with self._lock:
             return self._color
+
+    @property
+    def rating(self) -> Optional[int]:
+        """This client's ELO rating from its Welcome, or ``None`` before logging in."""
+        with self._lock:
+            return self._rating
 
     def take_rejection(self) -> Optional[str]:
         """The last rejection reason, cleared on read so the UI shows it only once."""

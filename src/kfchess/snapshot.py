@@ -49,6 +49,7 @@ class GameSnapshot:
     scores: Dict[Color, int]
     logs: Dict[Color, List[str]]
     names: Dict[Color, str]                # only colours that have logged in so far
+    ratings: Dict[Color, int]              # ELO rating per logged-in colour
     phase: str                             # "start" / "playing" / "over"
     winner: Optional[Color]
     now_ms: int
@@ -77,6 +78,7 @@ class GameSnapshot:
             "scores": {color.value: value for color, value in self.scores.items()},
             "logs": {color.value: lines for color, lines in self.logs.items()},
             "names": {color.value: name for color, name in self.names.items()},
+            "ratings": {color.value: r for color, r in self.ratings.items()},
             "phase": self.phase,
             "winner": None if self.winner is None else self.winner.value,
             "now_ms": self.now_ms,
@@ -98,6 +100,7 @@ class GameSnapshot:
         scores = {Color(prefix): value for prefix, value in data["scores"].items()}
         logs = {Color(prefix): lines for prefix, lines in data["logs"].items()}
         names = {Color(prefix): name for prefix, name in data["names"].items()}
+        ratings = {Color(prefix): r for prefix, r in data["ratings"].items()}
         winner = None if data["winner"] is None else Color(data["winner"])
         return cls(
             rows=data["rows"],
@@ -107,6 +110,7 @@ class GameSnapshot:
             scores=scores,
             logs=logs,
             names=names,
+            ratings=ratings,
             phase=data["phase"],
             winner=winner,
             now_ms=data["now_ms"],
