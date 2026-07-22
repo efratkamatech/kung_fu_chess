@@ -33,3 +33,26 @@ def test_the_default_id_is_four_uppercase_hex_characters():
     assert len(room_id) == 4
     assert room_id == room_id.upper()
     assert all(c in "0123456789ABCDEF" for c in room_id)
+
+
+def test_remove_game_forgets_its_room():
+    rooms = RoomManager(generate_id=sequence("AAAA"))
+    rooms.create(7)
+    rooms.remove_game(7)
+    assert rooms.game_for("AAAA") is None
+
+
+def test_remove_game_leaves_other_rooms_untouched():
+    rooms = RoomManager(generate_id=sequence("AAAA", "BBBB"))
+    rooms.create(7)
+    rooms.create(8)
+    rooms.remove_game(7)
+    assert rooms.game_for("AAAA") is None
+    assert rooms.game_for("BBBB") == 8  # a different game's room survives
+
+
+def test_remove_game_is_a_no_op_for_an_unknown_game():
+    rooms = RoomManager(generate_id=sequence("AAAA"))
+    rooms.create(7)
+    rooms.remove_game(99)  # no room maps to game 99
+    assert rooms.game_for("AAAA") == 7

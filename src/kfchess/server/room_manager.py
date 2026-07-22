@@ -39,3 +39,12 @@ class RoomManager:
     def game_for(self, room_id: str) -> Optional[int]:
         """The game id registered for ``room_id``, or ``None`` if there is no such room."""
         return self._game_by_room.get(room_id)
+
+    def remove_game(self, game_id: int) -> None:
+        """Forget the room (if any) that maps to ``game_id`` — called when it is over.
+
+        A no-op for a matchmade game, which was never registered under a room id.
+        """
+        for room_id, mapped in list(self._game_by_room.items()):
+            if mapped == game_id:
+                del self._game_by_room[room_id]

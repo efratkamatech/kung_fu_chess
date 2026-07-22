@@ -284,13 +284,6 @@ def test_disconnecting_a_waiting_seeker_removes_them_from_the_queue():
     assert of_type(other, Seated) == []  # the disconnected seeker was not matched
 
 
-def test_ticking_a_game_whose_players_all_left_does_not_crash():
-    hub, white, black, wid, bid = seat_two()
-    hub.disconnect(wid)
-    hub.disconnect(bid)
-    hub.tick(10)  # the game has no members left -- must tick without error
-
-
 # --- disconnect -> auto-resign ------------------------------------------------
 
 def test_a_disconnect_mid_game_shows_the_opponent_a_resign_countdown():
@@ -438,6 +431,36 @@ def test_a_solo_room_game_that_ends_is_left_unrated():
     hub.tick(100000)  # white captures the unowned black king -> game over
     assert of_type(creator, State)[-1].snapshot.winner is Color.WHITE
     assert hub._users.get_rating("Efrat") == START_RATING  # unrated: no opponent
+
+
+# --- cleanup: games are discarded once empty ----------------------------------
+
+def test_a_game_is_discarded_once_every_member_has_left():
+    hub, white, black, wid, bid = seat_two()
+    hub.disconnect(wid)
+    assert len(hub._games) == 1  # black is still there, so the game stays
+    hub.disconnect(bid)
+    assert hub._games == {}      # now empty -> cleaned up
+
+
+def test_a_spectator_leaving_does_not_discard_a_live_game():
+    hub = make_lobby()
+    _, _, room_id = open_room(hub)
+    _, bid = login_ready(hub, "Dan")
+    hub.receive(bid, encode(JoinRoom(room_id)))
+    watcher, wid = login_ready(hub, "Sam")
+    hub.receive(wid, encode(JoinRoom(room_id)))
+
+    hub.disconnect(wid)          # the spectator leaves
+    assert len(hub._games) == 1  # the two players keep the game alive
+
+
+def test_discarding_a_room_game_also_forgets_its_room():
+    hub = make_lobby()
+    _, cid, room_id = open_room(hub)  # a lone creator opens a room, then leaves
+    hub.disconnect(cid)
+    assert hub._games == {}
+    assert hub._rooms.game_for(room_id) is None  # the room id is freed too
 
 
 # --- the async entry point is importable --------------------------------------

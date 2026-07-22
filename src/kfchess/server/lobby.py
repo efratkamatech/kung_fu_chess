@@ -105,10 +105,24 @@ class Lobby:
         """
         self._matchmaker.cancel(client_id)
         client = self._clients.get(client_id)
-        if client is not None and client.session_id is not None and client.color is not None:
-            self._games[client.session_id].session.mark_disconnected(client.color)
+        game_id = client.session_id if client is not None else None
+        if game_id is not None and client.color is not None:
+            self._games[game_id].session.mark_disconnected(client.color)
         self._clients.pop(client_id, None)
         _log.info("client %d disconnected", client_id)
+        if game_id is not None:
+            self._discard_if_empty(game_id)
+
+    def _discard_if_empty(self, game_id: int) -> None:
+        """Drop a game (and its room) once its last member has left, freeing its memory.
+
+        Only empty games are removed, so no still-connected client is ever left pointing
+        at a game that no longer exists. A game kept alive for a disconnect countdown
+        (its opponent is still watching) is not empty, so it survives until they leave too.
+        """
+        if not self._members(game_id):
+            del self._games[game_id]
+            self._rooms.remove_game(game_id)
 
     # --- inbound messages ----------------------------------------------------
 
@@ -302,13 +316,11 @@ class Lobby:
     def _broadcast_events(self, game_id: int) -> None:
         """Send each queued sound-kind event to the game's members, before its state.
 
-        With no members left (both players gone), the queue is left intact rather than
-        drained into the void — mirroring the old server's care with the game-start
-        sound — though in practice a live game always has at least one member.
+        A game always has at least one member when this runs — it is only called right
+        after seating someone or on a move, and empty games are discarded on disconnect —
+        so the game-start sound is never drained into the void.
         """
         members = self._members(game_id)
-        if not members:
-            return
         for kind in self._games[game_id].session.drain_events():
             text = encode(Event(kind))
             for client in members:
