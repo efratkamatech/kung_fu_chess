@@ -10,6 +10,8 @@ it delegates to — handling a click, the winner text, and when to quit — are 
 
 from __future__ import annotations
 
+import math
+
 from kfchess.config import HUD_TEXT_COLOR, PANEL_BG
 from kfchess.graphics.img import Img
 from kfchess.graphics.input import window_to_board
@@ -71,6 +73,18 @@ class ThinClientApp:
             f"{self._player_names[winner]} wins!" if winner is not None else "Game Over"
         )
 
+    def _countdown_text(self, snapshot):
+        """The opponent-disconnected overlay line, or ``None`` when there is none.
+
+        Shown only while a game is in progress with a player missing: the server sends
+        which colour dropped and the ms left on their auto-resign countdown, which we
+        round up to whole seconds for the message.
+        """
+        if snapshot.disconnected is None or snapshot.phase == "over":
+            return None
+        seconds = math.ceil(snapshot.resign_ms / 1000)
+        return f"Opponent disconnected -- resigning in {seconds}s"
+
     def _should_quit(self, key: int, window_closed: bool) -> bool:
         """The client quits on ESC or when the window is closed."""
         return key == _ESC_KEY or window_closed
@@ -117,6 +131,12 @@ class ThinClientApp:
             self._renderer.draw_start_banner(
                 frame, "KungFu Chess", "Click your piece to move"
             )
+        else:
+            countdown = self._countdown_text(snapshot)
+            if countdown is not None:
+                self._renderer.draw_start_banner(
+                    frame, countdown, "Waiting for them to return"
+                )
         return frame
 
     def _waiting_frame(self):  # pragma: no cover  (shown only before the first snapshot)

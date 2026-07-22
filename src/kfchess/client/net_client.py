@@ -20,10 +20,13 @@ import threading
 from typing import Optional, Tuple
 
 from kfchess.model.color import Color
-from kfchess.protocol import Event, Rejected, Seated, State, Welcome, decode
+from kfchess.protocol import Event, Notice, Rejected, Seated, State, Welcome, decode
 from kfchess.snapshot import GameSnapshot
 
 Credentials = Tuple[str, str]  # (username, password)
+# The answer to a "Play" request: ("seated", colour) once matched, or
+# ("notice", reason) — e.g. ("notice", "no_opponent") — if the search timed out.
+MatchResult = Tuple[str, object]
 
 
 class NetClient:
@@ -45,6 +48,9 @@ class NetClient:
         self._login_queue: "queue.Queue[Credentials]" = queue.Queue()
         # The outcome of each login attempt: None = accepted, else the refusal reason.
         self._login_results: "queue.Queue[Optional[str]]" = queue.Queue()
+        # "Play" requests waiting to be sent, and the answer to each (seated / notice).
+        self._play_queue: "queue.Queue[None]" = queue.Queue()
+        self._match_results: "queue.Queue[MatchResult]" = queue.Queue()
 
     def handle(self, text: str) -> None:
         """Process one incoming wire message: store the snapshot, colour, or rejection.
@@ -65,6 +71,10 @@ class NetClient:
                 self._login_results.put(None)  # login accepted
             elif isinstance(message, Seated):
                 self._color = message.color  # matchmaking put us in a game as this colour
+                self._match_results.put(("seated", message.color))
+            elif isinstance(message, Notice):
+                # A lobby notice (e.g. "no_opponent") answers a pending Play request.
+                self._match_results.put(("notice", message.reason))
             elif isinstance(message, Rejected):
                 # Before logging in, a rejection means the login was refused (bad
                 # password); after, it means a move was refused.
@@ -98,6 +108,26 @@ class NetClient:
     def next_login(self, timeout: Optional[float] = None) -> Credentials:
         """Block until a login attempt is queued and return it (network thread)."""
         return self._login_queue.get(timeout=timeout)
+
+    def play(self) -> None:
+        """Queue a "Play" request; the network thread sends it as a Play message.
+
+        The answer (matched, or no opponent) is reported by one :meth:`wait_for_match`.
+        """
+        self._play_queue.put(None)
+
+    def next_play(self, timeout: Optional[float] = None) -> None:
+        """Block until a "Play" request is queued (network thread); returns nothing."""
+        return self._play_queue.get(timeout=timeout)
+
+    def wait_for_match(self, timeout: Optional[float] = None) -> MatchResult:
+        """Block until the server answers a "Play" request.
+
+        Returns ``("seated", colour)`` once matched into a game, or
+        ``("notice", reason)`` (e.g. ``("notice", "no_opponent")``) if it timed out —
+        the caller can then prompt the player to try again.
+        """
+        return self._match_results.get(timeout=timeout)
 
     def next_event(self) -> Optional[str]:
         """The next queued sound-kind event (e.g. ``"capture"``), or ``None`` if none
@@ -150,7 +180,7 @@ class NetClient:
 
         import websockets
 
-        from kfchess.protocol import Login, Move, encode
+        from kfchess.protocol import Login, Move, Play, encode
 
         async with websockets.connect(url) as websocket:
             loop = asyncio.get_event_loop()
@@ -164,9 +194,14 @@ class NetClient:
                     username, password = await loop.run_in_executor(None, self.next_login)
                     await websocket.send(encode(Login(username, password)))
 
+            async def send_plays() -> None:
+                while True:
+                    await loop.run_in_executor(None, self.next_play)
+                    await websocket.send(encode(Play()))
+
             async def transmit() -> None:
                 while True:
                     cmd = await loop.run_in_executor(None, self._outgoing.get)
                     await websocket.send(encode(Move(cmd)))
 
-            await asyncio.gather(receive(), send_logins(), transmit())
+            await asyncio.gather(receive(), send_logins(), send_plays(), transmit())

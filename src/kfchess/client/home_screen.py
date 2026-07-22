@@ -53,3 +53,22 @@ def login_loop(
         if reason is None:
             return username
         notify(f"Login failed: {reason}. Please try again.")
+
+
+def lobby_loop(
+    net,
+    read_line: ReadLine = input,
+    notify: Callable[[str], None] = print,
+) -> None:
+    """Press "Play", find a game, and retry if no opponent turns up (slide 6).
+
+    Each round waits for the player to ask for a game, sends a Play request, and blocks
+    on the server's answer: it returns once matched, or reports "no opponent" and loops.
+    """
+    while True:
+        read_line("Press Enter to find a game... ")
+        net.play()
+        kind, _ = net.wait_for_match()
+        if kind == "seated":
+            return
+        notify("Couldn't find an opponent right now. Let's try again.")

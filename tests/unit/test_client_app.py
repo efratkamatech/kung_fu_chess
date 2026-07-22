@@ -39,7 +39,7 @@ class SpyPlayer(SoundPlayer):
         self.played.append(sound)
 
 
-def a_snapshot(winner=None):
+def a_snapshot(winner=None, phase="playing", disconnected=None, resign_ms=0):
     # white rook at (1,0)=a1, black king at (0,1)=b2, on a 2x2 board
     return GameSnapshot(
         rows=2,
@@ -50,9 +50,11 @@ def a_snapshot(winner=None):
         logs={Color.WHITE: [], Color.BLACK: []},
         names={},
         ratings={},
-        phase="playing",
+        phase=phase,
         winner=winner,
         now_ms=0,
+        disconnected=disconnected,
+        resign_ms=resign_ms,
     )
 
 
@@ -91,6 +93,22 @@ def test_winner_text_uses_the_player_name_or_falls_back():
     app = an_app(FakeNet())
     assert app._winner_text(a_snapshot(winner=Color.WHITE)) == "Efrat wins!"
     assert app._winner_text(a_snapshot(winner=None)) == "Game Over"
+
+
+def test_countdown_text_rounds_the_remaining_seconds_up():
+    app = an_app(FakeNet())
+    snapshot = a_snapshot(disconnected=Color.BLACK, resign_ms=11200)
+    assert app._countdown_text(snapshot) == "Opponent disconnected -- resigning in 12s"
+
+
+def test_no_countdown_text_when_nobody_has_disconnected():
+    assert an_app(FakeNet())._countdown_text(a_snapshot()) is None
+
+
+def test_no_countdown_text_once_the_game_is_over():
+    app = an_app(FakeNet())
+    snapshot = a_snapshot(phase="over", disconnected=Color.BLACK, resign_ms=5000)
+    assert app._countdown_text(snapshot) is None
 
 
 def test_quits_on_escape_or_a_closed_window():

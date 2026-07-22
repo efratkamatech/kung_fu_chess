@@ -5,9 +5,9 @@ Run it from the project root (with the graphics deps and the server extra instal
     python client_main.py --url ws://localhost:8765
 
 It first asks for your username and password in the shell (retrying on a wrong
-password), then opens the window. The first player to log in is white, the second
-black; later ones watch. The window draws whatever the server sends and turns your
-clicks into move commands.
+password), then lets you press "Play" to be matched with an opponent of similar
+rating. Once matched it opens the window, which draws whatever the server sends and
+turns your clicks into move commands.
 """
 
 import argparse
@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from kfchess.client.bootstrap import build_thin_client_app  # noqa: E402
-from kfchess.client.home_screen import login_loop  # noqa: E402
+from kfchess.client.home_screen import lobby_loop, login_loop  # noqa: E402
 from kfchess.client.net_client import NetClient  # noqa: E402
 from kfchess.config import SERVER_HOST, SERVER_PORT  # noqa: E402
 from kfchess.graphics.sound import WinsoundPlayer  # noqa: E402
@@ -33,6 +33,7 @@ def main() -> None:
     net_client = NetClient()
     net_client.start(args.url)     # begin connecting on a background thread
     login_loop(net_client)         # shell prompt + retry until the server accepts (slide 5)
+    lobby_loop(net_client)         # press Play, matchmake, retry on no opponent (slide 6)
     # A real sound player here (silent by default in the app factory) so THIS player's
     # own window beeps -- each client plays its own copy of whatever the server signals.
     build_thin_client_app(net_client, sound_player=WinsoundPlayer()).run()

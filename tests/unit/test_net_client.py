@@ -2,7 +2,16 @@
 
 from kfchess.client.net_client import NetClient
 from kfchess.model.color import Color
-from kfchess.protocol import Event, Move, Rejected, Seated, State, Welcome, encode
+from kfchess.protocol import (
+    Event,
+    Move,
+    Notice,
+    Rejected,
+    Seated,
+    State,
+    Welcome,
+    encode,
+)
 from kfchess.snapshot import CellView, GameSnapshot
 
 
@@ -114,6 +123,24 @@ def test_a_queued_login_is_available_to_the_network_thread():
     client = NetClient()
     client.login("Efrat", "secret")
     assert client.next_login() == ("Efrat", "secret")
+
+
+def test_a_queued_play_is_available_to_the_network_thread():
+    client = NetClient()
+    client.play()
+    assert client.next_play() is None  # a Play carries no payload
+
+
+def test_a_seated_message_answers_a_play_with_the_colour():
+    client = NetClient()
+    client.handle(encode(Seated(Color.WHITE)))
+    assert client.wait_for_match() == ("seated", Color.WHITE)
+
+
+def test_a_notice_answers_a_play_with_its_reason():
+    client = NetClient()
+    client.handle(encode(Notice("no_opponent")))
+    assert client.wait_for_match() == ("notice", "no_opponent")
 
 
 def test_an_event_message_is_queued_for_next_event():
