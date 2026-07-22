@@ -1,6 +1,12 @@
 """Tests for GameSession: colour assignment, move handling, and snapshots."""
 
-from kfchess.config import SOUND_CAPTURE, SOUND_GAME_OVER, SOUND_GAME_START, SOUND_MOVE
+from kfchess.config import (
+    RESIGN_COUNTDOWN_MS,
+    SOUND_CAPTURE,
+    SOUND_GAME_OVER,
+    SOUND_GAME_START,
+    SOUND_MOVE,
+)
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
@@ -170,3 +176,55 @@ def test_capturing_the_king_queues_capture_then_game_over():
     session.drain_events()  # clear the move event
     session.tick(100000)    # rook arrives and captures the king
     assert session.drain_events() == [SOUND_CAPTURE, SOUND_GAME_OVER]
+
+
+# --- disconnect and auto-resign (M5) -----------------------------------------
+
+def test_mark_disconnected_shows_a_countdown_in_the_snapshot():
+    session = rook_session()
+    session.mark_disconnected(Color.BLACK)
+    snapshot = session.snapshot()
+    assert snapshot.disconnected is Color.BLACK
+    assert snapshot.resign_ms == RESIGN_COUNTDOWN_MS
+
+
+def test_ticking_runs_the_resign_countdown_down():
+    session = rook_session()
+    session.mark_disconnected(Color.BLACK)
+    session.tick(500)
+    assert session.snapshot().resign_ms == RESIGN_COUNTDOWN_MS - 500
+
+
+def test_the_countdown_expiring_resigns_the_missing_player():
+    session = rook_session()
+    session.drain_events()  # clear the initial game-start event
+    session.mark_disconnected(Color.BLACK)
+    session.tick(RESIGN_COUNTDOWN_MS)
+    snapshot = session.snapshot()
+    assert snapshot.winner is Color.WHITE   # the missing player's opponent wins
+    assert snapshot.phase == "over"
+    assert snapshot.disconnected is None    # the countdown is cleared
+    assert snapshot.resign_ms == 0
+    assert session.drain_events() == [SOUND_GAME_OVER]
+
+
+def test_no_move_is_accepted_after_a_resign():
+    session = rook_session()
+    session.resign(Color.BLACK)  # black resigns -> white wins
+    assert session.apply_command(Color.WHITE, "WRa1a3") == "game_over"
+
+
+def test_resigning_an_already_finished_game_is_ignored():
+    session = king_session()
+    session.apply_command(Color.WHITE, "WRa1a3")
+    session.tick(100000)          # white captures the king -> white already won
+    session.resign(Color.WHITE)   # would hand the win to black -- must be ignored
+    assert session.snapshot().winner is Color.WHITE
+
+
+def test_a_disconnect_after_the_game_is_over_starts_no_countdown():
+    session = king_session()
+    session.apply_command(Color.WHITE, "WRa1a3")
+    session.tick(100000)          # game already over by capture
+    session.mark_disconnected(Color.WHITE)
+    assert session.snapshot().disconnected is None

@@ -17,10 +17,11 @@ from typing import Dict, List, Optional
 from kfchess.app.bootstrap import build_game
 from kfchess.bus import topics
 from kfchess.bus.event_bus import EventBus
-from kfchess.bus.events import GameStarted
+from kfchess.bus.events import GameOver, GameStarted
 from kfchess.bus.publisher import BusPublisher
 from kfchess.config import (
     HUD_MOVES_VISIBLE,
+    RESIGN_COUNTDOWN_MS,
     SOUND_CAPTURE,
     SOUND_GAME_OVER,
     SOUND_GAME_START,
@@ -55,21 +56,27 @@ class GameSession:
 
     def __init__(self, board: Board) -> None:
         self._engine, _ = build_game(board)
-        bus = EventBus()
-        self._engine.add_observer(BusPublisher(bus))
+        self._bus = EventBus()
+        self._engine.add_observer(BusPublisher(self._bus))
         self._score = ScoreBoard()
         self._log = MovesLog(board.rows)
         self._banner = GameBanner()
-        self._score.subscribe(bus)
-        self._log.subscribe(bus)
-        self._banner.subscribe(bus)
+        self._score.subscribe(self._bus)
+        self._log.subscribe(self._bus)
+        self._banner.subscribe(self._bus)
         self._pending_events: List[str] = []
         for topic, kind in _SOUND_KIND_BY_TOPIC.items():
-            bus.subscribe(topic, self._make_collector(kind))
-        bus.publish(GameStarted())
+            self._bus.subscribe(topic, self._make_collector(kind))
+        self._bus.publish(GameStarted())
         self._taken: List[Color] = []
         self._names: Dict[Color, str] = {}
         self._ratings: Dict[Color, int] = {}
+        # Disconnect handling (M5): the colour whose player has dropped and the ms left
+        # on their auto-resign countdown; and a winner forced by a resign (which the
+        # engine — pure, king-capture only — has no notion of).
+        self._disconnected: Optional[Color] = None
+        self._resign_ms = 0
+        self._resigned_winner: Optional[Color] = None
 
     def _make_collector(self, kind: str):
         """A bus handler that queues ``kind`` for the next :meth:`drain_events`."""
@@ -100,12 +107,44 @@ class GameSession:
         """Record ``color``'s current ELO rating (for display in the snapshot)."""
         self._ratings[color] = rating
 
+    def is_over(self) -> bool:
+        """Whether the game has ended, by a king capture *or* a resign."""
+        return self._engine.winner is not None or self._resigned_winner is not None
+
+    def mark_disconnected(self, color: Color) -> None:
+        """Note that ``color``'s player has dropped; start their auto-resign countdown.
+
+        Does nothing once the game is over. The countdown (and which colour is missing)
+        travels in the snapshot so the opponent's screen can show it; :meth:`tick` runs
+        it down and resigns the missing player at zero.
+        """
+        if self.is_over():
+            return
+        self._disconnected = color
+        self._resign_ms = RESIGN_COUNTDOWN_MS
+
+    def resign(self, loser: Color) -> None:
+        """End the game with ``loser``'s opponent as the winner (no king was captured).
+
+        Publishes ``GameOver`` on the bus — the same event a capture raises — so the
+        banner flips to "over" and the game-over sound fires, exactly as a normal win.
+        """
+        if self.is_over():
+            return
+        self._resigned_winner = loser.opponent
+        self._disconnected = None
+        self._resign_ms = 0
+        self._bus.publish(GameOver(winner=self._resigned_winner))
+
     def apply_command(self, color: Color, cmd: str) -> Optional[str]:
         """Apply a move command from ``color``.
 
         Returns ``None`` if the move was accepted, or a short reason string if it was
-        refused (bad format, not your colour/piece, empty source, or illegal move).
+        refused (game already over, bad format, not your colour/piece, empty source, or
+        illegal move).
         """
+        if self.is_over():
+            return "game_over"
         try:
             move = parse_command(cmd, self._engine.board.rows, self._engine.board.cols)
         except CommandError as error:
@@ -124,7 +163,11 @@ class GameSession:
         return None
 
     def tick(self, dt_ms: int) -> None:
-        """Advance the game clock by ``dt_ms`` and resolve any arrivals."""
+        """Advance the game clock by ``dt_ms``, resolve arrivals, run any resign timer."""
+        if self._disconnected is not None and not self.is_over():
+            self._resign_ms -= dt_ms
+            if self._resign_ms <= 0:
+                self.resign(self._disconnected)
         self._engine.wait(dt_ms)
 
     def snapshot(self) -> GameSnapshot:
@@ -152,8 +195,10 @@ class GameSession:
             names=dict(self._names),  # only colours that have logged in so far
             ratings=dict(self._ratings),
             phase=self._banner.phase,
-            winner=self._engine.winner,
+            winner=self._resigned_winner or self._engine.winner,
             now_ms=self._engine.now_ms,
+            disconnected=self._disconnected,
+            resign_ms=max(self._resign_ms, 0) if self._disconnected is not None else 0,
         )
 
     def _cell_view(

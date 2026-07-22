@@ -53,6 +53,10 @@ class GameSnapshot:
     phase: str                             # "start" / "playing" / "over"
     winner: Optional[Color]
     now_ms: int
+    # Disconnect handling (M5): the colour whose player has dropped, plus the ms left on
+    # their auto-resign countdown, so the opponent's screen can show it. Default: nobody.
+    disconnected: Optional[Color] = None
+    resign_ms: int = 0
 
     def to_dict(self) -> dict:
         """A JSON-ready dict; colours become their one-letter prefix (``w`` / ``b``)."""
@@ -82,6 +86,10 @@ class GameSnapshot:
             "phase": self.phase,
             "winner": None if self.winner is None else self.winner.value,
             "now_ms": self.now_ms,
+            "disconnected": (
+                None if self.disconnected is None else self.disconnected.value
+            ),
+            "resign_ms": self.resign_ms,
         }
 
     @classmethod
@@ -102,6 +110,8 @@ class GameSnapshot:
         names = {Color(prefix): name for prefix, name in data["names"].items()}
         ratings = {Color(prefix): r for prefix, r in data["ratings"].items()}
         winner = None if data["winner"] is None else Color(data["winner"])
+        raw_disconnected = data.get("disconnected")
+        disconnected = None if raw_disconnected is None else Color(raw_disconnected)
         return cls(
             rows=data["rows"],
             cols=data["cols"],
@@ -114,4 +124,6 @@ class GameSnapshot:
             phase=data["phase"],
             winner=winner,
             now_ms=data["now_ms"],
+            disconnected=disconnected,
+            resign_ms=data.get("resign_ms", 0),
         )

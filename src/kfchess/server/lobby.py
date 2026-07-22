@@ -89,8 +89,16 @@ class Lobby:
         return client_id
 
     def disconnect(self, client_id: int) -> None:
-        """Forget a client that has left, pulling it out of any matchmaking queue."""
+        """Forget a client that has left; if it was mid-game, start its resign countdown.
+
+        A player who drops out of a game is not removed from it — the game is kept so the
+        opponent keeps seeing the board with a countdown, and wins by default if the
+        player does not come back before it runs out (auto-resign, applied in :meth:`tick`).
+        """
         self._matchmaker.cancel(client_id)
+        client = self._clients.get(client_id)
+        if client is not None and client.session_id is not None and client.color is not None:
+            self._games[client.session_id].session.mark_disconnected(client.color)
         self._clients.pop(client_id, None)
 
     # --- inbound messages ----------------------------------------------------

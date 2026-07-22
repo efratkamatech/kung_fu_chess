@@ -281,6 +281,34 @@ def test_ticking_a_game_whose_players_all_left_does_not_crash():
     hub.tick(10)  # the game has no members left -- must tick without error
 
 
+# --- disconnect -> auto-resign ------------------------------------------------
+
+def test_a_disconnect_mid_game_shows_the_opponent_a_resign_countdown():
+    from kfchess.config import RESIGN_COUNTDOWN_MS
+
+    hub, white, _, _, bid = seat_two()
+    hub.disconnect(bid)   # black drops
+    hub.tick(10)          # the countdown, and who is missing, ride the next broadcast
+
+    snapshot = of_type(white, State)[-1].snapshot
+    assert snapshot.disconnected is Color.BLACK
+    assert snapshot.resign_ms == RESIGN_COUNTDOWN_MS - 10
+
+
+def test_a_player_who_never_returns_auto_resigns_and_the_opponent_wins():
+    from kfchess.config import RESIGN_COUNTDOWN_MS
+
+    hub, white, _, _, bid = seat_two()
+    hub.disconnect(bid)
+    hub.tick(RESIGN_COUNTDOWN_MS)  # the countdown runs out
+
+    snapshot = of_type(white, State)[-1].snapshot
+    assert snapshot.winner is Color.WHITE
+    assert snapshot.phase == "over"
+    assert hub._users.get_rating("Efrat") == 1216  # winner up, via the usual ELO path
+    assert hub._users.get_rating("Dan") == 1184     # loser down
+
+
 # --- game over and ELO --------------------------------------------------------
 
 def test_capturing_the_king_broadcasts_capture_then_game_over():
