@@ -4,7 +4,6 @@ import pytest
 
 from kfchess.model.color import Color
 from kfchess.protocol import (
-    Assigned,
     CreateRoom,
     Event,
     JoinRoom,
@@ -44,7 +43,6 @@ def a_snapshot():
     [
         Move("WQe2e5"),
         Login("Efrat", "secret"),
-        Assigned(Color.BLACK),
         Welcome(Color.WHITE, 1200),
         Welcome(None, 1350),  # a spectator: no colour
         Rejected("bad_password"),

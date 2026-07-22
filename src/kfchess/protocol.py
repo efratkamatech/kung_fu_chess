@@ -34,7 +34,6 @@ class MessageType(str, Enum):
     MOVE = "move"                # client -> server: a move command such as "WQe2e5"
     LOGIN = "login"              # client -> server: this client's username + password
     STATE = "state"              # server -> client: the current game snapshot
-    ASSIGNED = "assigned"        # server -> client: which colour this client plays
     WELCOME = "welcome"          # server -> client: login accepted; your colour + rating
     REJECTED = "rejected"        # server -> client: a move (or login) was refused, w/ reason
     EVENT = "event"              # server -> client: a one-shot notification (e.g. a sound)
@@ -120,21 +119,6 @@ class State:
     @classmethod
     def from_dict(cls, data: dict) -> "State":
         return cls(GameSnapshot.from_dict(data["snapshot"]))
-
-
-@dataclass(frozen=True)
-class Assigned:
-    """Server -> client: this client plays ``color``."""
-
-    type: ClassVar[MessageType] = MessageType.ASSIGNED
-    color: Color
-
-    def to_dict(self) -> dict:
-        return {"type": self.type, "color": self.color.value}
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "Assigned":
-        return cls(Color(data["color"]))
 
 
 @dataclass(frozen=True)
@@ -280,7 +264,6 @@ _BY_TYPE = {
     MessageType.MOVE: Move,
     MessageType.LOGIN: Login,
     MessageType.STATE: State,
-    MessageType.ASSIGNED: Assigned,
     MessageType.WELCOME: Welcome,
     MessageType.REJECTED: Rejected,
     MessageType.EVENT: Event,
