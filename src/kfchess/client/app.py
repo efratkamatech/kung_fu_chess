@@ -137,6 +137,15 @@ class ThinClientApp:
                 self._renderer.draw_start_banner(
                     frame, countdown, "Waiting for them to return"
                 )
+        if snapshot.room_id is not None:  # share this id so a friend can join
+            frame.put_text(
+                f"Room {snapshot.room_id}", self._board_x_offset + 10, 30, 0.7,
+                HUD_TEXT_COLOR, 2,
+            )
+        if self._net.color is None:  # a spectator: make the read-only role visible
+            frame.put_text(
+                "Spectating", self._board_x_offset + 10, 60, 0.7, HUD_TEXT_COLOR, 2
+            )
         return frame
 
     def _waiting_frame(self):  # pragma: no cover  (shown only before the first snapshot)

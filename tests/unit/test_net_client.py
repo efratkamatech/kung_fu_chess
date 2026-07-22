@@ -3,7 +3,9 @@
 from kfchess.client.net_client import NetClient
 from kfchess.model.color import Color
 from kfchess.protocol import (
+    CreateRoom,
     Event,
+    JoinRoom,
     Move,
     Notice,
     Rejected,
@@ -141,6 +143,29 @@ def test_a_notice_answers_a_play_with_its_reason():
     client = NetClient()
     client.handle(encode(Notice("no_opponent")))
     assert client.wait_for_match() == ("notice", "no_opponent")
+
+
+def test_starts_with_no_room_id():
+    assert NetClient().room_id is None
+
+
+def test_create_room_queues_a_request_for_the_network_thread():
+    client = NetClient()
+    client.create_room()
+    assert client.next_room_action() == CreateRoom()
+
+
+def test_join_room_queues_a_request_with_the_room_id():
+    client = NetClient()
+    client.join_room("7C2F")
+    assert client.next_room_action() == JoinRoom("7C2F")
+
+
+def test_being_seated_via_a_room_records_the_room_id():
+    client = NetClient()
+    client.handle(encode(Seated(Color.BLACK, "7C2F")))
+    assert client.color is Color.BLACK
+    assert client.room_id == "7C2F"
 
 
 def test_an_event_message_is_queued_for_next_event():

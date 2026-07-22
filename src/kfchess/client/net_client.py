@@ -20,7 +20,17 @@ import threading
 from typing import Optional, Tuple
 
 from kfchess.model.color import Color
-from kfchess.protocol import Event, Notice, Rejected, Seated, State, Welcome, decode
+from kfchess.protocol import (
+    CreateRoom,
+    Event,
+    JoinRoom,
+    Notice,
+    Rejected,
+    Seated,
+    State,
+    Welcome,
+    decode,
+)
 from kfchess.snapshot import GameSnapshot
 
 Credentials = Tuple[str, str]  # (username, password)
@@ -37,6 +47,7 @@ class NetClient:
         self._snapshot: Optional[GameSnapshot] = None
         self._color: Optional[Color] = None
         self._rating: Optional[int] = None
+        self._room_id: Optional[str] = None
         self._logged_in = False
         self._rejection: Optional[str] = None
         self._outgoing: "queue.Queue[str]" = queue.Queue()
@@ -51,6 +62,8 @@ class NetClient:
         # "Play" requests waiting to be sent, and the answer to each (seated / notice).
         self._play_queue: "queue.Queue[None]" = queue.Queue()
         self._match_results: "queue.Queue[MatchResult]" = queue.Queue()
+        # Room actions waiting to be sent (a CreateRoom or JoinRoom message object).
+        self._room_queue: "queue.Queue" = queue.Queue()
 
     def handle(self, text: str) -> None:
         """Process one incoming wire message: store the snapshot, colour, or rejection.
@@ -70,7 +83,8 @@ class NetClient:
                 self._logged_in = True
                 self._login_results.put(None)  # login accepted
             elif isinstance(message, Seated):
-                self._color = message.color  # matchmaking put us in a game as this colour
+                self._color = message.color  # put in a game as this colour (None = watcher)
+                self._room_id = message.room_id  # set when seated via a room
                 self._match_results.put(("seated", message.color))
             elif isinstance(message, Notice):
                 # A lobby notice (e.g. "no_opponent") answers a pending Play request.
@@ -121,13 +135,25 @@ class NetClient:
         return self._play_queue.get(timeout=timeout)
 
     def wait_for_match(self, timeout: Optional[float] = None) -> MatchResult:
-        """Block until the server answers a "Play" request.
+        """Block until the server answers a "Play", "create room", or "join room" request.
 
-        Returns ``("seated", colour)`` once matched into a game, or
-        ``("notice", reason)`` (e.g. ``("notice", "no_opponent")``) if it timed out —
-        the caller can then prompt the player to try again.
+        Returns ``("seated", colour)`` once placed in a game (``colour`` is ``None`` for
+        a spectator), or ``("notice", reason)`` — e.g. ``"no_opponent"`` or
+        ``"no_such_room"`` — so the caller can prompt the player to try again.
         """
         return self._match_results.get(timeout=timeout)
+
+    def create_room(self) -> None:
+        """Queue a "create room" request; the answer comes via :meth:`wait_for_match`."""
+        self._room_queue.put(CreateRoom())
+
+    def join_room(self, room_id: str) -> None:
+        """Queue a "join room" request; the answer comes via :meth:`wait_for_match`."""
+        self._room_queue.put(JoinRoom(room_id))
+
+    def next_room_action(self, timeout: Optional[float] = None):
+        """Block until a room action is queued and return it (network thread)."""
+        return self._room_queue.get(timeout=timeout)
 
     def next_event(self) -> Optional[str]:
         """The next queued sound-kind event (e.g. ``"capture"``), or ``None`` if none
@@ -157,6 +183,12 @@ class NetClient:
         """This client's ELO rating from its Welcome, or ``None`` before logging in."""
         with self._lock:
             return self._rating
+
+    @property
+    def room_id(self) -> Optional[str]:
+        """The private room's id if seated via a room, else ``None`` (matchmade game)."""
+        with self._lock:
+            return self._room_id
 
     def take_rejection(self) -> Optional[str]:
         """The last rejection reason, cleared on read so the UI shows it only once."""
@@ -199,9 +231,16 @@ class NetClient:
                     await loop.run_in_executor(None, self.next_play)
                     await websocket.send(encode(Play()))
 
+            async def send_rooms() -> None:
+                while True:
+                    action = await loop.run_in_executor(None, self.next_room_action)
+                    await websocket.send(encode(action))
+
             async def transmit() -> None:
                 while True:
                     cmd = await loop.run_in_executor(None, self._outgoing.get)
                     await websocket.send(encode(Move(cmd)))
 
-            await asyncio.gather(receive(), send_logins(), send_plays(), transmit())
+            await asyncio.gather(
+                receive(), send_logins(), send_plays(), send_rooms(), transmit()
+            )
