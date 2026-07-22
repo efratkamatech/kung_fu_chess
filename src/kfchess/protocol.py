@@ -28,6 +28,9 @@ ASSIGNED = "assigned"  # server -> client: which colour this client plays
 WELCOME = "welcome"    # server -> client: login accepted; your colour + rating
 REJECTED = "rejected"  # server -> client: a move (or login) was refused, with a reason
 EVENT = "event"        # server -> client: a one-shot notification (e.g. play a sound)
+PLAY = "play"          # client -> server: put me in the matchmaking queue ("Play")
+SEATED = "seated"      # server -> client: you are now seated in a game as this colour
+NOTICE = "notice"      # server -> client: a lobby-level notice (e.g. "no_opponent")
 
 
 @dataclass(frozen=True)
@@ -159,6 +162,68 @@ class Event:
         return cls(data["kind"])
 
 
+@dataclass(frozen=True)
+class Play:
+    """Client -> server: put this (already logged-in) client into matchmaking.
+
+    Carries nothing — the server already knows who is asking and at what rating. It is
+    the shell lobby's "Play" (regular) choice; the "Rooms" choice uses other messages.
+    """
+
+    type: ClassVar[str] = PLAY
+
+    def to_dict(self) -> dict:
+        return {"type": self.type}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Play":
+        return cls()
+
+
+@dataclass(frozen=True)
+class Seated:
+    """Server -> client: you have been placed in a game as ``color``.
+
+    Sent when matchmaking (or, later, a room) seats the player — separately from
+    :class:`Welcome`, which now only confirms login and leaves the client in the lobby.
+    ``color`` is ``None`` for a spectator (a role rooms introduce in M6).
+    """
+
+    type: ClassVar[str] = SEATED
+    color: Optional[Color]
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "color": None if self.color is None else self.color.value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Seated":
+        color = None if data["color"] is None else Color(data["color"])
+        return cls(color)
+
+
+@dataclass(frozen=True)
+class Notice:
+    """Server -> client: a lobby-level notice, identified by a short ``reason`` code.
+
+    Used for things that are neither game state nor a rejected action — chiefly
+    ``"no_opponent"`` when a matchmaking search times out, which the client turns into a
+    "can't find opponent" popup.
+    """
+
+    type: ClassVar[str] = NOTICE
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {"type": self.type, "reason": self.reason}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Notice":
+        return cls(data["reason"])
+
+
 # Dispatch table: message tag -> the class that reads it.
 _BY_TYPE = {
     MOVE: Move,
@@ -168,6 +233,9 @@ _BY_TYPE = {
     WELCOME: Welcome,
     REJECTED: Rejected,
     EVENT: Event,
+    PLAY: Play,
+    SEATED: Seated,
+    NOTICE: Notice,
 }
 
 

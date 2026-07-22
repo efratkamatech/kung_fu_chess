@@ -8,8 +8,11 @@ from kfchess.protocol import (
     Event,
     Login,
     Move,
+    Notice,
+    Play,
     ProtocolError,
     Rejected,
+    Seated,
     State,
     Welcome,
     decode,
@@ -45,6 +48,10 @@ def a_snapshot():
         Rejected("bad_password"),
         State(a_snapshot()),
         Event("capture"),
+        Play(),
+        Seated(Color.WHITE),
+        Seated(None),  # a spectator: no colour
+        Notice("no_opponent"),
     ],
 )
 def test_encode_then_decode_round_trips(message):
