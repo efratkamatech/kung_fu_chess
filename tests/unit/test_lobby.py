@@ -19,7 +19,9 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.protocol import (
+    CreateRoom,
     Event,
+    JoinRoom,
     Login,
     Move,
     Notice,
@@ -79,6 +81,14 @@ def login(hub, client_id, username="Efrat", password="pw"):
 
 def of_type(client, cls):
     return [m for m in client.received if isinstance(m, cls)]
+
+
+def login_ready(hub, name, new_board=_rook_board):
+    """Connect and log a client into the lobby; returns the client and its id."""
+    client = FakeClient()
+    cid = hub.connect(client.send)
+    login(hub, cid, name)
+    return client, cid
 
 
 def seat_two(new_board=_rook_board):
@@ -333,6 +343,101 @@ def test_a_finished_game_updates_both_ratings_once_and_shows_them():
 
     hub.tick(100000)  # a further tick must not apply the update a second time
     assert hub._users.get_rating("Efrat") == 1216
+
+
+# --- rooms and spectators (M6) ------------------------------------------------
+
+def open_room(hub, creator_name="Efrat"):
+    """Log in a creator and open a room; returns the creator, its id, and the room id."""
+    creator, cid = login_ready(hub, creator_name)
+    hub.receive(cid, encode(CreateRoom()))
+    room_id = of_type(creator, Seated)[-1].room_id
+    return creator, cid, room_id
+
+
+def test_creating_a_room_seats_the_creator_as_white_with_a_shareable_id():
+    hub = make_lobby()
+    creator, _, room_id = open_room(hub)
+    assert of_type(creator, Seated)[-1] == Seated(Color.WHITE, room_id)
+    assert room_id is not None
+    assert of_type(creator, State)[-1].snapshot.room_id == room_id  # shown in the window
+
+
+def test_joining_a_room_seats_the_second_player_as_black():
+    hub = make_lobby()
+    _, _, room_id = open_room(hub)
+    joiner, jid = login_ready(hub, "Dan")
+    hub.receive(jid, encode(JoinRoom(room_id)))
+    assert of_type(joiner, Seated)[-1] == Seated(Color.BLACK, room_id)
+
+
+def test_a_third_joiner_watches_as_a_spectator_with_no_colour():
+    hub = make_lobby()
+    _, _, room_id = open_room(hub)
+    _, bid = login_ready(hub, "Dan")
+    hub.receive(bid, encode(JoinRoom(room_id)))
+    watcher, wid = login_ready(hub, "Sam")
+    hub.receive(wid, encode(JoinRoom(room_id)))
+    assert of_type(watcher, Seated)[-1] == Seated(None, room_id)
+
+
+def test_a_spectator_cannot_move():
+    hub = make_lobby()
+    creator, cid, room_id = open_room(hub)
+    _, bid = login_ready(hub, "Dan")
+    hub.receive(bid, encode(JoinRoom(room_id)))
+    watcher, wid = login_ready(hub, "Sam")
+    hub.receive(wid, encode(JoinRoom(room_id)))
+
+    hub.receive(wid, encode(Move("WRa1a3")))
+    assert watcher.received[-1] == Rejected("not_a_player")
+
+
+def test_a_spectator_still_sees_the_game_state():
+    hub = make_lobby()
+    creator, cid, room_id = open_room(hub)
+    _, bid = login_ready(hub, "Dan")
+    hub.receive(bid, encode(JoinRoom(room_id)))
+    watcher, wid = login_ready(hub, "Sam")
+    hub.receive(wid, encode(JoinRoom(room_id)))
+    before = len(watcher.received)
+
+    hub.receive(cid, encode(Move("WRa1a3")))  # white plays
+    assert isinstance(watcher.received[-1], State)  # the watcher was broadcast to
+    assert len(watcher.received) > before
+
+
+def test_joining_an_unknown_room_is_refused():
+    hub = make_lobby()
+    client, cid = login_ready(hub, "Efrat")
+    hub.receive(cid, encode(JoinRoom("ZZZZ")))
+    assert client.received[-1] == Notice("no_such_room")
+
+
+def test_creating_or_joining_a_room_before_logging_in_is_ignored():
+    hub = make_lobby()
+    a, b = FakeClient(), FakeClient()
+    aid, bid = hub.connect(a.send), hub.connect(b.send)
+    hub.receive(aid, encode(CreateRoom()))
+    hub.receive(bid, encode(JoinRoom("ZZZZ")))
+    assert of_type(a, Seated) == [] and a.received == []
+    assert of_type(b, Seated) == []
+
+
+def test_creating_a_room_while_already_in_a_game_is_ignored():
+    hub, white, _, wid, _ = seat_two()
+    before = len(white.received)
+    hub.receive(wid, encode(CreateRoom()))
+    assert len(white.received) == before
+
+
+def test_a_solo_room_game_that_ends_is_left_unrated():
+    hub = make_lobby(_king_board)
+    creator, cid, _ = open_room(hub)  # only the creator; nobody is black
+    hub.receive(cid, encode(Move("WRa1a3")))
+    hub.tick(100000)  # white captures the unowned black king -> game over
+    assert of_type(creator, State)[-1].snapshot.winner is Color.WHITE
+    assert hub._users.get_rating("Efrat") == START_RATING  # unrated: no opponent
 
 
 # --- the async entry point is importable --------------------------------------

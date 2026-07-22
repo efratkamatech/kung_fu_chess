@@ -24,7 +24,9 @@ from typing import Callable, List, Optional
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.protocol import (
+    CreateRoom,
     Event,
+    JoinRoom,
     Login,
     Move,
     Notice,
@@ -37,6 +39,7 @@ from kfchess.protocol import (
     encode,
 )
 from kfchess.server.matchmaker import Matchmaker
+from kfchess.server.room_manager import RoomManager
 from kfchess.server.session import GameSession
 from kfchess.server.user_store import UserStore
 
@@ -70,6 +73,7 @@ class Lobby:
         self._new_board = new_board
         self._users = users
         self._matchmaker = Matchmaker()
+        self._rooms = RoomManager()
         self._clients: dict[int, _Client] = {}
         self._games: dict[int, _LiveGame] = {}
         self._next_client_id = 0
@@ -115,6 +119,10 @@ class Lobby:
             self._on_login(client_id, message.username, message.password)
         elif isinstance(message, Play):
             self._on_play(client_id)
+        elif isinstance(message, CreateRoom):
+            self._on_create_room(client_id)
+        elif isinstance(message, JoinRoom):
+            self._on_join_room(client_id, message.room_id)
         elif isinstance(message, Move):
             self._on_move(client_id, message.cmd)
         # anything else is not something a client sends -- drop it
@@ -156,26 +164,67 @@ class Lobby:
 
     def _start_game(self, white_id: int, black_id: int) -> None:
         """Create a game, seat the two matched clients, and show them the board."""
-        game_id = self._next_game_id
-        self._next_game_id += 1
-        game = _LiveGame(GameSession(self._new_board()))
-        self._games[game_id] = game
-        for client_id in (white_id, black_id):
-            client = self._clients[client_id]
-            color = game.session.assign_color()  # WHITE first, then BLACK
-            client.session_id = game_id
-            client.color = color
-            game.session.set_name(color, client.username)
-            game.session.set_rating(color, client.rating)
-            self._send(client_id, Seated(color))
+        game_id = self._new_game()
+        self._seat(white_id, game_id)  # first assign_color -> WHITE
+        self._seat(black_id, game_id)  # second -> BLACK
         self._broadcast_events(game_id)  # the queued "game started" sound
         self._broadcast_state(game_id)
+
+    def _on_create_room(self, client_id: int) -> None:
+        """Open a new private room; the creator plays white and gets its shareable id."""
+        client = self._clients[client_id]
+        if client.username is None or client.session_id is not None:
+            return
+        self._matchmaker.cancel(client_id)  # opening a room ends any pending search
+        game_id = self._new_game()
+        room_id = self._rooms.create(game_id)
+        self._games[game_id].session.set_room_id(room_id)
+        self._seat(client_id, game_id, room_id)  # assign_color -> WHITE
+        self._broadcast_events(game_id)
+        self._broadcast_state(game_id)
+
+    def _on_join_room(self, client_id: int, room_id: str) -> None:
+        """Join an existing room: second joiner is black, the rest are spectators."""
+        client = self._clients[client_id]
+        if client.username is None or client.session_id is not None:
+            return
+        game_id = self._rooms.game_for(room_id)
+        if game_id is None:
+            self._send(client_id, Notice("no_such_room"))
+            return
+        self._matchmaker.cancel(client_id)
+        self._seat(client_id, game_id, room_id)  # BLACK, then None (a spectator)
+        self._broadcast_events(game_id)
+        self._broadcast_state(game_id)
+
+    def _new_game(self) -> int:
+        """Create an empty game and return its id."""
+        game_id = self._next_game_id
+        self._next_game_id += 1
+        self._games[game_id] = _LiveGame(GameSession(self._new_board()))
+        return game_id
+
+    def _seat(self, client_id: int, game_id: int, room_id: Optional[str] = None) -> None:
+        """Place a client in a game: next free colour, or spectator when both seats are taken.
+
+        Records the player's name and rating on the session (spectators have neither) and
+        tells the client its colour with :class:`Seated` (carrying ``room_id`` for rooms).
+        """
+        game = self._games[game_id]
+        client = self._clients[client_id]
+        color = game.session.assign_color()  # WHITE, then BLACK, then None (spectator)
+        client.session_id = game_id
+        client.color = color
+        if color is not None:
+            game.session.set_name(color, client.username)
+            game.session.set_rating(color, client.rating)
+        self._send(client_id, Seated(color, room_id))
 
     def _on_move(self, client_id: int, cmd: str) -> None:
         """Apply a move to the sender's game, or refuse it, telling only that game."""
         client = self._clients[client_id]
-        if client.session_id is None:
-            self._send(client_id, Rejected("not_a_player"))
+        if client.session_id is None or client.color is None:
+            self._send(client_id, Rejected("not_a_player"))  # spectators cannot move
             return
         game = self._games[client.session_id]
         reason = game.session.apply_command(client.color, cmd)
@@ -206,15 +255,16 @@ class Lobby:
     def _maybe_record_result(self, game_id: int) -> None:
         """When a game has just ended, apply the ELO update once and show the new ratings.
 
-        A matchmade game always has two known players, so there is no "unrated" case
-        here (rooms bring that back in M6); this simply reads the winner off a snapshot,
-        persists both ratings, and writes them back for the next broadcast.
+        A matchmade game always has two known players; a room game may not (a lone
+        creator can capture the unowned enemy king), so a game that ends without two
+        known players is left unrated. Otherwise the winner is read off a snapshot, both
+        ratings are persisted, and they are written back for the next broadcast.
         """
         game = self._games[game_id]
         if game.recorded:
             return
         snapshot = game.session.snapshot()
-        if snapshot.winner is None:
+        if snapshot.winner is None or len(snapshot.names) < 2:
             return
         game.recorded = True
         winner, loser = snapshot.winner, snapshot.winner.opponent

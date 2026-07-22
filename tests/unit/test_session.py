@@ -112,6 +112,16 @@ def test_set_rating_records_a_rating_by_colour():
     assert session.snapshot().ratings == {Color.WHITE: 1234}
 
 
+def test_a_matchmade_game_has_no_room_id():
+    assert rook_session().snapshot().room_id is None
+
+
+def test_set_room_id_is_reflected_in_the_snapshot():
+    session = rook_session()
+    session.set_room_id("7C2F")
+    assert session.snapshot().room_id == "7C2F"
+
+
 # --- snapshots ---------------------------------------------------------------
 
 def test_a_fresh_snapshot_shows_the_start_phase_and_the_pieces():

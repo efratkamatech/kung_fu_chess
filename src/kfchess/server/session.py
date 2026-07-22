@@ -77,6 +77,8 @@ class GameSession:
         self._disconnected: Optional[Color] = None
         self._resign_ms = 0
         self._resigned_winner: Optional[Color] = None
+        # The private-room id this game was opened under, or None for a matchmade game.
+        self._room_id: Optional[str] = None
 
     def _make_collector(self, kind: str):
         """A bus handler that queues ``kind`` for the next :meth:`drain_events`."""
@@ -106,6 +108,10 @@ class GameSession:
     def set_rating(self, color: Color, rating: int) -> None:
         """Record ``color``'s current ELO rating (for display in the snapshot)."""
         self._ratings[color] = rating
+
+    def set_room_id(self, room_id: str) -> None:
+        """Mark this game as belonging to a private room (its id rides the snapshot)."""
+        self._room_id = room_id
 
     def is_over(self) -> bool:
         """Whether the game has ended, by a king capture *or* a resign."""
@@ -199,6 +205,7 @@ class GameSession:
             now_ms=self._engine.now_ms,
             disconnected=self._disconnected,
             resign_ms=max(self._resign_ms, 0) if self._disconnected is not None else 0,
+            room_id=self._room_id,
         )
 
     def _cell_view(
