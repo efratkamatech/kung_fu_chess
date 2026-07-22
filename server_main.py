@@ -4,9 +4,10 @@ Run it from the project root (needs the server extra: ``pip install -e ".[server
 
     python server_main.py
 
-It hosts one game: the first client to connect plays white, the second black, and it
-broadcasts the game state to every client many times a second. This is deliberately
-headless — it never imports the graphics/OpenCV layer — so it can run on a plain server.
+Clients log in, press "Play", and are matched into games by rating; the server runs
+each game and broadcasts its state to that game's players many times a second. This is
+deliberately headless — it never imports the graphics/OpenCV layer — so it can run on a
+plain server.
 """
 
 import asyncio
@@ -22,8 +23,8 @@ from kfchess.tokens import load_board_csv  # noqa: E402
 
 
 def main() -> None:
-    board = load_board_csv(BOARD_CSV)
-    asyncio.run(serve(board))
+    # A factory, not a single board: every game the lobby starts gets its own fresh copy.
+    asyncio.run(serve(lambda: load_board_csv(BOARD_CSV)))
 
 
 if __name__ == "__main__":

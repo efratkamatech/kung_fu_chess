@@ -2,7 +2,7 @@
 
 from kfchess.client.net_client import NetClient
 from kfchess.model.color import Color
-from kfchess.protocol import Event, Move, Rejected, State, Welcome, encode
+from kfchess.protocol import Event, Move, Rejected, Seated, State, Welcome, encode
 from kfchess.snapshot import CellView, GameSnapshot
 
 
@@ -57,6 +57,13 @@ def test_a_spectator_welcome_has_no_colour_but_still_a_rating():
     client.handle(encode(Welcome(None, 1200)))
     assert client.color is None
     assert client.rating == 1200
+
+
+def test_a_seated_message_sets_the_colour_matchmaking_assigned():
+    client = NetClient()
+    client.handle(encode(Welcome(None, 1200)))  # logged in, no seat yet
+    client.handle(encode(Seated(Color.BLACK)))  # then matched into a game
+    assert client.color is Color.BLACK
 
 
 def test_a_move_rejection_after_login_is_reported_once_then_cleared():

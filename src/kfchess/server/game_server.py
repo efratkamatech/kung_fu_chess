@@ -1,187 +1,28 @@
-"""The WebSocket game server: a testable sync hub plus a thin async I/O wrapper.
+"""The WebSocket entry point: a thin async wrapper around the synchronous :class:`Lobby`.
 
-Two layers, split so the logic can be fully tested without any sockets:
-
-- :class:`GameServer` — a *synchronous* hub. It owns one :class:`GameSession` and the
-  set of connected clients, each represented only by a ``send(text)`` callback. All the
-  behaviour lives here: assign a colour on connect, decode and apply moves, broadcast
-  state, reject bad moves, drop clients. Every branch is unit-tested with fake clients.
-- :func:`serve` — the irreducible async part: it accepts real WebSocket connections,
-  pumps outgoing messages through a per-connection queue, and ticks the game on a timer.
-  It only wires sockets to the hub, so it is excluded from coverage like the cv2 I/O in
-  ``img.py``.
+All the behaviour — logging players in, matchmaking, routing moves, broadcasting — lives
+in :class:`kfchess.server.lobby.Lobby`, which is fully unit-tested with fake ``send``
+callbacks and no sockets. :func:`serve` is the irreducible async part: it accepts real
+WebSocket connections, pumps outgoing messages through a per-connection queue, and ticks
+the lobby on a timer. It only wires sockets to the hub, so it is excluded from coverage
+like the cv2 I/O in ``img.py``.
 """
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional
-
-from kfchess.model.color import Color
-from kfchess.protocol import (
-    Event,
-    Login,
-    Move,
-    Rejected,
-    State,
-    Welcome,
-    decode,
-    encode,
-)
-from kfchess.server.session import GameSession
-from kfchess.server.user_store import UserStore
-
-Send = Callable[[str], None]  # how the hub pushes one wire string to one client
-
-
-class GameServer:
-    """A synchronous hub over one :class:`GameSession`; clients are ``send`` callbacks."""
-
-    def __init__(self, session: GameSession, users: UserStore) -> None:
-        self._session = session
-        self._users = users
-        self._sends: Dict[int, Send] = {}       # client id -> its send callback
-        self._colors: Dict[int, Color] = {}     # client id -> its colour (players only)
-        self._next_id = 0
-        self._result_recorded = False           # so the ELO update runs exactly once
-
-    def connect(self, send: Send) -> int:
-        """Register a new client and send it the current state; no colour until login.
-
-        Returns the client id used by :meth:`receive` and :meth:`disconnect`. Colour is
-        assigned only after a successful login (so a wrong password can't hold a seat).
-
-        Also flushes any events queued since the session was built straight to this
-        client (in practice, just the initial "game started").
-        """
-        client_id = self._next_id
-        self._next_id += 1
-        self._sends[client_id] = send
-        send(encode(State(self._session.snapshot())))
-        for kind in self._session.drain_events():
-            send(encode(Event(kind)))
-        return client_id
-
-    def receive(self, client_id: int, text: str) -> None:
-        """Handle one wire message from a client. Unrecognised messages are ignored."""
-        try:
-            message = decode(text)
-        except ValueError:
-            return  # not valid JSON, or an unknown message type — drop it
-        if isinstance(message, Login):
-            self._on_login(client_id, message.username, message.password)
-            return
-        if not isinstance(message, Move):
-            return  # nothing else comes from a client
-        color = self._colors.get(client_id)
-        if color is None:
-            self._send_to(client_id, Rejected("not_a_player"))
-            return
-        reason = self._session.apply_command(color, message.cmd)
-        if reason is not None:
-            self._send_to(client_id, Rejected(reason))
-        else:
-            self._maybe_record_result()
-            self.broadcast_events()
-            self.broadcast_state()
-
-    def _on_login(self, client_id: int, username: str, password: str) -> None:
-        """Authenticate ``client_id`` and, on success, seat and welcome the player.
-
-        The username is registered on first sight (at the starting rating) or verified
-        against its stored password; a mismatch is refused with ``Rejected`` and the
-        client may try again on the same connection. On success we assign a colour if a
-        seat is free (else the player watches as a spectator), record their name and
-        rating on the session (game *state*, broadcast to everyone), and send them a
-        ``Welcome`` — the signal their window waits for before opening.
-        """
-        rating = self._users.register_or_login(username, password)
-        if rating is None:
-            self._send_to(client_id, Rejected("bad_password"))
-            return
-        color = self._colors.get(client_id)
-        if color is None:
-            color = self._session.assign_color()  # may be None (a spectator seat)
-            if color is not None:
-                self._colors[client_id] = color
-        if color is not None:
-            self._session.set_name(color, username)
-            self._session.set_rating(color, rating)
-        self._send_to(client_id, Welcome(color, rating))
-        self.broadcast_state()
-
-    def disconnect(self, client_id: int) -> None:
-        """Forget a client that has left."""
-        self._sends.pop(client_id, None)
-        self._colors.pop(client_id, None)
-
-    def tick(self, dt_ms: int) -> None:
-        """Advance the game by ``dt_ms`` and broadcast the new state to everyone."""
-        self._session.tick(dt_ms)
-        self._maybe_record_result()
-        self.broadcast_events()
-        self.broadcast_state()
-
-    def _maybe_record_result(self) -> None:
-        """When the game has just ended, apply the ELO update once and show the new ratings.
-
-        Reads the winner and player names off a snapshot; skips rating a game that did
-        not have two known (logged-in) players. Persists both new ratings in the store
-        and writes them back onto the session so the next state broadcast shows them.
-        """
-        if self._result_recorded:
-            return
-        snapshot = self._session.snapshot()
-        if snapshot.winner is None or len(snapshot.names) < 2:
-            return
-        self._result_recorded = True
-        winner, loser = snapshot.winner, snapshot.winner.opponent
-        self._users.record_win(snapshot.names[winner], snapshot.names[loser])
-        self._session.set_rating(winner, self._users.get_rating(snapshot.names[winner]))
-        self._session.set_rating(loser, self._users.get_rating(snapshot.names[loser]))
-
-    def broadcast_state(self) -> None:
-        """Send the current snapshot to every connected client."""
-        text = encode(State(self._session.snapshot()))
-        for send in self._sends.values():
-            send(text)
-
-    def broadcast_events(self) -> None:
-        """Send every sound-kind event queued since the last drain to all clients.
-
-        Sent *alongside* the state broadcast, not instead of it — the board's truth
-        always comes from the snapshot; this is only a one-shot nudge ("play this
-        sound now") for whichever client has a local player wired to react to it.
-
-        With no clients connected, this deliberately does *not* drain the session's
-        queue: the background ticker calls this every tick regardless of connections,
-        and draining with nobody to send to would silently discard the event (in
-        particular, the initial "game started" event, queued before anyone has
-        connected) instead of leaving it for the next :meth:`connect` to deliver.
-        """
-        if not self._sends:
-            return
-        for kind in self._session.drain_events():
-            text = encode(Event(kind))
-            for send in self._sends.values():
-                send(text)
-
-    def _send_to(self, client_id: int, message) -> None:
-        send = self._sends.get(client_id)
-        if send is not None:
-            send(encode(message))
-
 
 async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
-    board,
-    host: Optional[str] = None,
-    port: Optional[int] = None,
-    tick_ms: Optional[int] = None,
+    new_board,
+    host=None,
+    port=None,
+    tick_ms=None,
 ) -> None:
-    """Run the WebSocket server until cancelled, driving one :class:`GameServer`.
+    """Run the WebSocket server until cancelled, driving one :class:`Lobby`.
 
-    Each connection gets an outgoing asyncio queue that a drain task feeds to the
-    socket, so the synchronous hub can "send" by simply enqueuing. A background ticker
-    advances the game and broadcasts on a fixed interval. This is pure socket/timer
+    ``new_board`` makes a fresh starting board for each game the lobby spins up. Each
+    connection gets an outgoing asyncio queue that a drain task feeds to the socket, so
+    the synchronous hub can "send" by simply enqueuing. A background ticker advances all
+    games and the matchmaking clock on a fixed interval. This is pure socket/timer
     plumbing around the tested hub, hence excluded from coverage.
     """
     import asyncio
@@ -189,11 +30,13 @@ async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
     import websockets
 
     from kfchess.config import SERVER_HOST, SERVER_PORT, SERVER_TICK_MS
+    from kfchess.server.lobby import Lobby
+    from kfchess.server.user_store import UserStore
 
     host = host or SERVER_HOST
     port = port or SERVER_PORT
     tick_ms = tick_ms or SERVER_TICK_MS
-    hub = GameServer(GameSession(board), UserStore())
+    hub = Lobby(new_board, UserStore())
 
     async def drain(queue: "asyncio.Queue", websocket) -> None:
         while True:

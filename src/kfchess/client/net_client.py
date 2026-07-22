@@ -20,7 +20,7 @@ import threading
 from typing import Optional, Tuple
 
 from kfchess.model.color import Color
-from kfchess.protocol import Event, Rejected, State, Welcome, decode
+from kfchess.protocol import Event, Rejected, Seated, State, Welcome, decode
 from kfchess.snapshot import GameSnapshot
 
 Credentials = Tuple[str, str]  # (username, password)
@@ -63,6 +63,8 @@ class NetClient:
                 self._rating = message.rating
                 self._logged_in = True
                 self._login_results.put(None)  # login accepted
+            elif isinstance(message, Seated):
+                self._color = message.color  # matchmaking put us in a game as this colour
             elif isinstance(message, Rejected):
                 # Before logging in, a rejection means the login was refused (bad
                 # password); after, it means a move was refused.
