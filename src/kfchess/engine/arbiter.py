@@ -43,6 +43,7 @@ from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece, PieceState
 from kfchess.model.position import Position
+from kfchess.render_model import MovingPiece
 from kfchess.rules.promotion import Promotion
 
 
@@ -113,21 +114,6 @@ class Motion:
             enter = self.start_ms + slice_ms * k
             timeline.append((cell, enter, enter + slice_ms))
         return timeline
-
-
-@dataclass(frozen=True)
-class MovingPiece:
-    """A read-only view of one in-flight piece: where it is now and its endpoints.
-
-    Produced by ``RealTimeArbiter.moving_pieces`` for callers that render motion.
-    ``position`` is a *fractional* cell — e.g. (3.5, 4.0) is halfway between two
-    cells — not a board cell. It carries no way to mutate the underlying motion.
-    """
-
-    piece: Piece
-    position: Tuple[float, float]
-    source: Position
-    target: Position
 
 
 @dataclass(frozen=True)

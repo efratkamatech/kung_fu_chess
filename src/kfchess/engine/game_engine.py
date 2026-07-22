@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from kfchess.engine.arbiter import MovingPiece, RealTimeArbiter
+from kfchess.engine.arbiter import RealTimeArbiter
+from kfchess.render_model import MovingPiece
 from kfchess.engine.clock import Clock
 from kfchess.engine.events import GameObserver
 from kfchess.model.board import Board

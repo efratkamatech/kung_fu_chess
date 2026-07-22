@@ -1,4 +1,5 @@
-from kfchess.engine.arbiter import Motion, MovingPiece, RealTimeArbiter
+from kfchess.engine.arbiter import Motion, RealTimeArbiter
+from kfchess.render_model import MovingPiece
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece, PieceState

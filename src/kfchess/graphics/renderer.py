@@ -29,7 +29,7 @@ from kfchess.config import (
     STARTBANNER_ALPHA,
     STATE_IDLE,
 )
-from kfchess.engine.arbiter import MovingPiece
+from kfchess.render_model import MovingPiece
 from kfchess.graphics.assets import AnimationBank
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud

@@ -1,7 +1,7 @@
 import numpy as np
 
 from kfchess.config import BOARD_CSV, BOARD_IMAGE, CELL_PX, PANEL_PX, PIECES_DIR
-from kfchess.engine.arbiter import MovingPiece
+from kfchess.render_model import MovingPiece
 from kfchess.graphics.assets import AnimationBank
 from kfchess.observers import MovesLog, ScoreBoard
 from kfchess.tokens import load_board_csv
