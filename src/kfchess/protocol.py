@@ -15,31 +15,41 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from enum import Enum
 from typing import ClassVar, Optional
 
 from kfchess.model.color import Color
 from kfchess.snapshot import GameSnapshot
 
 # --- Message type tags -------------------------------------------------------
-MOVE = "move"          # client -> server: a move command such as "WQe2e5"
-LOGIN = "login"        # client -> server: this client's username + password
-STATE = "state"        # server -> client: the current game snapshot
-ASSIGNED = "assigned"  # server -> client: which colour this client plays
-WELCOME = "welcome"    # server -> client: login accepted; your colour + rating
-REJECTED = "rejected"  # server -> client: a move (or login) was refused, with a reason
-EVENT = "event"        # server -> client: a one-shot notification (e.g. play a sound)
-PLAY = "play"          # client -> server: put me in the matchmaking queue ("Play")
-SEATED = "seated"      # server -> client: you are now seated in a game as this colour
-NOTICE = "notice"      # server -> client: a lobby-level notice (e.g. "no_opponent")
-CREATE_ROOM = "create_room"  # client -> server: open a new private room, I'm white
-JOIN_ROOM = "join_room"      # client -> server: join the room with this id
+class MessageType(str, Enum):
+    """Every wire message's ``type`` tag, in one place.
+
+    Subclassing ``str`` keeps the wire format unchanged: each member *is* its lowercase
+    string (``MessageType.MOVE == "move"``), so ``json.dumps`` writes the plain tag and a
+    plain string decoded from JSON matches the enum member on lookup. Code gains a single,
+    typo-proof vocabulary with editor completion instead of scattered string literals.
+    """
+
+    MOVE = "move"                # client -> server: a move command such as "WQe2e5"
+    LOGIN = "login"              # client -> server: this client's username + password
+    STATE = "state"              # server -> client: the current game snapshot
+    ASSIGNED = "assigned"        # server -> client: which colour this client plays
+    WELCOME = "welcome"          # server -> client: login accepted; your colour + rating
+    REJECTED = "rejected"        # server -> client: a move (or login) was refused, w/ reason
+    EVENT = "event"              # server -> client: a one-shot notification (e.g. a sound)
+    PLAY = "play"                # client -> server: put me in the matchmaking queue ("Play")
+    SEATED = "seated"            # server -> client: you are now seated in a game as a colour
+    NOTICE = "notice"            # server -> client: a lobby-level notice (e.g. "no_opponent")
+    CREATE_ROOM = "create_room"  # client -> server: open a new private room, I'm white
+    JOIN_ROOM = "join_room"      # client -> server: join the room with this id
 
 
 @dataclass(frozen=True)
 class Move:
     """Client -> server: play the move described by ``cmd`` (e.g. ``"WQe2e5"``)."""
 
-    type: ClassVar[str] = MOVE
+    type: ClassVar[MessageType] = MessageType.MOVE
     cmd: str
 
     def to_dict(self) -> dict:
@@ -59,7 +69,7 @@ class Login:
     password so the player can try again.
     """
 
-    type: ClassVar[str] = LOGIN
+    type: ClassVar[MessageType] = MessageType.LOGIN
     username: str
     password: str = ""
 
@@ -80,7 +90,7 @@ class Welcome:
     comes back as :class:`Rejected` instead.
     """
 
-    type: ClassVar[str] = WELCOME
+    type: ClassVar[MessageType] = MessageType.WELCOME
     color: Optional[Color]
     rating: int
 
@@ -101,7 +111,7 @@ class Welcome:
 class State:
     """Server -> client: the whole game right now, as a snapshot."""
 
-    type: ClassVar[str] = STATE
+    type: ClassVar[MessageType] = MessageType.STATE
     snapshot: GameSnapshot
 
     def to_dict(self) -> dict:
@@ -116,7 +126,7 @@ class State:
 class Assigned:
     """Server -> client: this client plays ``color``."""
 
-    type: ClassVar[str] = ASSIGNED
+    type: ClassVar[MessageType] = MessageType.ASSIGNED
     color: Color
 
     def to_dict(self) -> dict:
@@ -131,7 +141,7 @@ class Assigned:
 class Rejected:
     """Server -> client: the last move was refused; ``reason`` says why."""
 
-    type: ClassVar[str] = REJECTED
+    type: ClassVar[MessageType] = MessageType.REJECTED
     reason: str
 
     def to_dict(self) -> dict:
@@ -153,7 +163,7 @@ class Event:
     sound player can act on ``kind`` directly with no further translation.
     """
 
-    type: ClassVar[str] = EVENT
+    type: ClassVar[MessageType] = MessageType.EVENT
     kind: str
 
     def to_dict(self) -> dict:
@@ -172,7 +182,7 @@ class Play:
     the shell lobby's "Play" (regular) choice; the "Rooms" choice uses other messages.
     """
 
-    type: ClassVar[str] = PLAY
+    type: ClassVar[MessageType] = MessageType.PLAY
 
     def to_dict(self) -> dict:
         return {"type": self.type}
@@ -192,7 +202,7 @@ class Seated:
     private room's id when seated via a room, or ``None`` for a matchmade game.
     """
 
-    type: ClassVar[str] = SEATED
+    type: ClassVar[MessageType] = MessageType.SEATED
     color: Optional[Color]
     room_id: Optional[str] = None
 
@@ -213,7 +223,7 @@ class Seated:
 class CreateRoom:
     """Client -> server: open a new private room; the creator plays white."""
 
-    type: ClassVar[str] = CREATE_ROOM
+    type: ClassVar[MessageType] = MessageType.CREATE_ROOM
 
     def to_dict(self) -> dict:
         return {"type": self.type}
@@ -231,7 +241,7 @@ class JoinRoom:
     id comes back as a :class:`Notice` (``"no_such_room"``).
     """
 
-    type: ClassVar[str] = JOIN_ROOM
+    type: ClassVar[MessageType] = MessageType.JOIN_ROOM
     room_id: str
 
     def to_dict(self) -> dict:
@@ -251,7 +261,7 @@ class Notice:
     "can't find opponent" popup.
     """
 
-    type: ClassVar[str] = NOTICE
+    type: ClassVar[MessageType] = MessageType.NOTICE
     reason: str
 
     def to_dict(self) -> dict:
@@ -262,20 +272,23 @@ class Notice:
         return cls(data["reason"])
 
 
-# Dispatch table: message tag -> the class that reads it.
+# Dispatch table: message tag -> the class that reads it. Keyed by the enum members,
+# but a plain string decoded from JSON still finds its class because each member *is*
+# its string (str-equality/hash), so ``_BY_TYPE["move"]`` and ``_BY_TYPE[MessageType.MOVE]``
+# are the same lookup.
 _BY_TYPE = {
-    MOVE: Move,
-    LOGIN: Login,
-    STATE: State,
-    ASSIGNED: Assigned,
-    WELCOME: Welcome,
-    REJECTED: Rejected,
-    EVENT: Event,
-    PLAY: Play,
-    SEATED: Seated,
-    NOTICE: Notice,
-    CREATE_ROOM: CreateRoom,
-    JOIN_ROOM: JoinRoom,
+    MessageType.MOVE: Move,
+    MessageType.LOGIN: Login,
+    MessageType.STATE: State,
+    MessageType.ASSIGNED: Assigned,
+    MessageType.WELCOME: Welcome,
+    MessageType.REJECTED: Rejected,
+    MessageType.EVENT: Event,
+    MessageType.PLAY: Play,
+    MessageType.SEATED: Seated,
+    MessageType.NOTICE: Notice,
+    MessageType.CREATE_ROOM: CreateRoom,
+    MessageType.JOIN_ROOM: JoinRoom,
 }
 
 
