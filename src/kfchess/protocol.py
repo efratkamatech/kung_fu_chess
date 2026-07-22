@@ -31,6 +31,8 @@ EVENT = "event"        # server -> client: a one-shot notification (e.g. play a 
 PLAY = "play"          # client -> server: put me in the matchmaking queue ("Play")
 SEATED = "seated"      # server -> client: you are now seated in a game as this colour
 NOTICE = "notice"      # server -> client: a lobby-level notice (e.g. "no_opponent")
+CREATE_ROOM = "create_room"  # client -> server: open a new private room, I'm white
+JOIN_ROOM = "join_room"      # client -> server: join the room with this id
 
 
 @dataclass(frozen=True)
@@ -184,24 +186,60 @@ class Play:
 class Seated:
     """Server -> client: you have been placed in a game as ``color``.
 
-    Sent when matchmaking (or, later, a room) seats the player — separately from
-    :class:`Welcome`, which now only confirms login and leaves the client in the lobby.
-    ``color`` is ``None`` for a spectator (a role rooms introduce in M6).
+    Sent when matchmaking or a room seats the player — separately from :class:`Welcome`,
+    which now only confirms login and leaves the client in the lobby. ``color`` is
+    ``None`` for a spectator (a room's third-and-later joiners). ``room_id`` is the
+    private room's id when seated via a room, or ``None`` for a matchmade game.
     """
 
     type: ClassVar[str] = SEATED
     color: Optional[Color]
+    room_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
             "type": self.type,
             "color": None if self.color is None else self.color.value,
+            "room_id": self.room_id,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Seated":
         color = None if data["color"] is None else Color(data["color"])
-        return cls(color)
+        return cls(color, data.get("room_id"))
+
+
+@dataclass(frozen=True)
+class CreateRoom:
+    """Client -> server: open a new private room; the creator plays white."""
+
+    type: ClassVar[str] = CREATE_ROOM
+
+    def to_dict(self) -> dict:
+        return {"type": self.type}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CreateRoom":
+        return cls()
+
+
+@dataclass(frozen=True)
+class JoinRoom:
+    """Client -> server: join the room identified by ``room_id``.
+
+    The second joiner plays black; anyone after that watches as a spectator. An unknown
+    id comes back as a :class:`Notice` (``"no_such_room"``).
+    """
+
+    type: ClassVar[str] = JOIN_ROOM
+    room_id: str
+
+    def to_dict(self) -> dict:
+        return {"type": self.type, "room_id": self.room_id}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "JoinRoom":
+        return cls(data["room_id"])
 
 
 @dataclass(frozen=True)
@@ -236,6 +274,8 @@ _BY_TYPE = {
     PLAY: Play,
     SEATED: Seated,
     NOTICE: Notice,
+    CREATE_ROOM: CreateRoom,
+    JOIN_ROOM: JoinRoom,
 }
 
 

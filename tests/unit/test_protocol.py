@@ -5,7 +5,9 @@ import pytest
 from kfchess.model.color import Color
 from kfchess.protocol import (
     Assigned,
+    CreateRoom,
     Event,
+    JoinRoom,
     Login,
     Move,
     Notice,
@@ -51,7 +53,10 @@ def a_snapshot():
         Play(),
         Seated(Color.WHITE),
         Seated(None),  # a spectator: no colour
+        Seated(Color.BLACK, "7C2F"),  # seated via a room, with its id
         Notice("no_opponent"),
+        CreateRoom(),
+        JoinRoom("7C2F"),
     ],
 )
 def test_encode_then_decode_round_trips(message):

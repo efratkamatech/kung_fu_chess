@@ -57,6 +57,9 @@ class GameSnapshot:
     # their auto-resign countdown, so the opponent's screen can show it. Default: nobody.
     disconnected: Optional[Color] = None
     resign_ms: int = 0
+    # The private room's id when this game was opened as a room, else None (M6). Shown at
+    # the top of the window so players can share it.
+    room_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         """A JSON-ready dict; colours become their one-letter prefix (``w`` / ``b``)."""
@@ -90,6 +93,7 @@ class GameSnapshot:
                 None if self.disconnected is None else self.disconnected.value
             ),
             "resign_ms": self.resign_ms,
+            "room_id": self.room_id,
         }
 
     @classmethod
@@ -126,4 +130,5 @@ class GameSnapshot:
             now_ms=data["now_ms"],
             disconnected=disconnected,
             resign_ms=data.get("resign_ms", 0),
+            room_id=data.get("room_id"),
         )
