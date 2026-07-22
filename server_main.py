@@ -17,12 +17,14 @@ from pathlib import Path
 # Make the src/ package importable when run as ``python server_main.py``.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from kfchess.config import BOARD_CSV  # noqa: E402
+from kfchess.config import BOARD_CSV, SERVER_LOG  # noqa: E402
+from kfchess.logging_setup import configure_logging  # noqa: E402
 from kfchess.server.game_server import serve  # noqa: E402
 from kfchess.tokens import load_board_csv  # noqa: E402
 
 
 def main() -> None:
+    configure_logging("kfchess", SERVER_LOG)  # all server activity -> server.log
     # A factory, not a single board: every game the lobby starts gets its own fresh copy.
     asyncio.run(serve(lambda: load_board_csv(BOARD_CSV)))
 

@@ -15,6 +15,7 @@ coverage, like the cv2 calls in ``img.py``.
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 from typing import Optional, Tuple
@@ -32,6 +33,8 @@ from kfchess.protocol import (
     decode,
 )
 from kfchess.snapshot import GameSnapshot
+
+_log = logging.getLogger(__name__)  # client activity trail; silent until configured
 
 Credentials = Tuple[str, str]  # (username, password)
 # The answer to a "Play" request: ("seated", colour) once matched, or
@@ -81,17 +84,21 @@ class NetClient:
                 self._color = message.color
                 self._rating = message.rating
                 self._logged_in = True
+                _log.info("login accepted (rating %s)", message.rating)
                 self._login_results.put(None)  # login accepted
             elif isinstance(message, Seated):
                 self._color = message.color  # put in a game as this colour (None = watcher)
                 self._room_id = message.room_id  # set when seated via a room
+                _log.info("seated as %s in room %s", message.color, message.room_id)
                 self._match_results.put(("seated", message.color))
             elif isinstance(message, Notice):
                 # A lobby notice (e.g. "no_opponent") answers a pending Play request.
+                _log.info("lobby notice: %s", message.reason)
                 self._match_results.put(("notice", message.reason))
             elif isinstance(message, Rejected):
                 # Before logging in, a rejection means the login was refused (bad
                 # password); after, it means a move was refused.
+                _log.info("rejected: %s", message.reason)
                 if self._logged_in:
                     self._rejection = message.reason
                 else:

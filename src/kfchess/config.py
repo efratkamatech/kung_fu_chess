@@ -153,6 +153,11 @@ MATCH_TIMEOUT_MS = 60_000
 # if they have not reconnected by the end, they auto-resign and the opponent wins.
 RESIGN_COUNTDOWN_MS = 20_000
 
+# --- Logging (M6) ------------------------------------------------------------
+# Where the server and client write their activity logs (git-ignored; not game art).
+SERVER_LOG = ASSETS_DIR.parent / "server.log"
+CLIENT_LOG = ASSETS_DIR.parent / "client.log"
+
 # --- Sound effects (played in reaction to bus events) ------------------------
 # Effect names: the SoundEffects subscriber plays one of these per game event.
 SOUND_MOVE = "move"

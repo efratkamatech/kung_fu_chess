@@ -24,3 +24,7 @@ users.db
 .idea/
 .DS_Store
 Thumbs.db
+
+# Server/client activity logs (M6)
+server.log
+client.log

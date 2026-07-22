@@ -18,6 +18,7 @@ every branch is unit-tested with fake ``send`` callbacks — no sockets at all. 
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
@@ -45,6 +46,8 @@ from kfchess.server.user_store import UserStore
 
 Send = Callable[[str], None]      # how the lobby pushes one wire string to one client
 NewBoard = Callable[[], Board]    # makes a fresh starting board for each new game
+
+_log = logging.getLogger(__name__)  # activity trail; silent until configure_logging runs
 
 
 @dataclass
@@ -90,6 +93,7 @@ class Lobby:
         client_id = self._next_client_id
         self._next_client_id += 1
         self._clients[client_id] = _Client(send)
+        _log.info("client %d connected", client_id)
         return client_id
 
     def disconnect(self, client_id: int) -> None:
@@ -104,6 +108,7 @@ class Lobby:
         if client is not None and client.session_id is not None and client.color is not None:
             self._games[client.session_id].session.mark_disconnected(client.color)
         self._clients.pop(client_id, None)
+        _log.info("client %d disconnected", client_id)
 
     # --- inbound messages ----------------------------------------------------
 
@@ -137,11 +142,13 @@ class Lobby:
         """
         rating = self._users.register_or_login(username, password)
         if rating is None:
+            _log.info("client %d login refused for %r", client_id, username)
             self._send(client_id, Rejected("bad_password"))
             return
         client = self._clients[client_id]
         client.username = username
         client.rating = rating
+        _log.info("client %d logged in as %r (rating %d)", client_id, username, rating)
         self._send(client_id, Welcome(client.color, rating))
 
     def _on_play(self, client_id: int) -> None:
@@ -179,6 +186,7 @@ class Lobby:
         game_id = self._new_game()
         room_id = self._rooms.create(game_id)
         self._games[game_id].session.set_room_id(room_id)
+        _log.info("client %d opened room %s (game %d)", client_id, room_id, game_id)
         self._seat(client_id, game_id, room_id)  # assign_color -> WHITE
         self._broadcast_events(game_id)
         self._broadcast_state(game_id)
@@ -190,9 +198,11 @@ class Lobby:
             return
         game_id = self._rooms.game_for(room_id)
         if game_id is None:
+            _log.info("client %d tried to join unknown room %s", client_id, room_id)
             self._send(client_id, Notice("no_such_room"))
             return
         self._matchmaker.cancel(client_id)
+        _log.info("client %d joined room %s (game %d)", client_id, room_id, game_id)
         self._seat(client_id, game_id, room_id)  # BLACK, then None (a spectator)
         self._broadcast_events(game_id)
         self._broadcast_state(game_id)
@@ -218,6 +228,8 @@ class Lobby:
         if color is not None:
             game.session.set_name(color, client.username)
             game.session.set_rating(color, client.rating)
+        role = "spectator" if color is None else color.value
+        _log.info("client %d seated in game %d as %s", client_id, game_id, role)
         self._send(client_id, Seated(color, room_id))
 
     def _on_move(self, client_id: int, cmd: str) -> None:
@@ -229,8 +241,10 @@ class Lobby:
         game = self._games[client.session_id]
         reason = game.session.apply_command(client.color, cmd)
         if reason is not None:
+            _log.info("game %d: move %r refused (%s)", client.session_id, cmd, reason)
             self._send(client_id, Rejected(reason))
             return
+        _log.info("game %d: %s played %s", client.session_id, client.color.value, cmd)
         self._maybe_record_result(client.session_id)
         self._broadcast_events(client.session_id)
         self._broadcast_state(client.session_id)
@@ -250,6 +264,7 @@ class Lobby:
             self._broadcast_events(game_id)
             self._broadcast_state(game_id)
         for client_id in self._matchmaker.tick(dt_ms):
+            _log.info("client %d matchmaking timed out", client_id)
             self._send(client_id, Notice("no_opponent"))
 
     def _maybe_record_result(self, game_id: int) -> None:

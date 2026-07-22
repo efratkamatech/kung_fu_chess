@@ -20,8 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from kfchess.client.bootstrap import build_thin_client_app  # noqa: E402
 from kfchess.client.home_screen import lobby_loop, login_loop  # noqa: E402
 from kfchess.client.net_client import NetClient  # noqa: E402
-from kfchess.config import SERVER_HOST, SERVER_PORT  # noqa: E402
+from kfchess.config import CLIENT_LOG, SERVER_HOST, SERVER_PORT  # noqa: E402
 from kfchess.graphics.sound import WinsoundPlayer  # noqa: E402
+from kfchess.logging_setup import configure_logging  # noqa: E402
 
 
 def main() -> None:
@@ -30,6 +31,7 @@ def main() -> None:
     parser.add_argument("--url", default=default_url, help="server WebSocket URL")
     args = parser.parse_args()
 
+    configure_logging("kfchess", CLIENT_LOG)  # all client activity -> client.log
     net_client = NetClient()
     net_client.start(args.url)     # begin connecting on a background thread
     login_loop(net_client)         # shell prompt + retry until the server accepts (slide 5)
