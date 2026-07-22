@@ -35,7 +35,8 @@ def main() -> None:
     net_client = NetClient()
     net_client.start(args.url)     # begin connecting on a background thread
     login_loop(net_client)         # shell prompt + retry until the server accepts (slide 5)
-    lobby_loop(net_client)         # press Play, matchmake, retry on no opponent (slide 6)
+    if net_client.color is None:   # not reconnected mid-game: pick one from the lobby menu
+        lobby_loop(net_client)     # play / create room / join room (slides 6-7)
     # A real sound player here (silent by default in the app factory) so THIS player's
     # own window beeps -- each client plays its own copy of whatever the server signals.
     build_thin_client_app(net_client, sound_player=WinsoundPlayer()).run()

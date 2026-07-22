@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from kfchess.model.board import Board
 from kfchess.model.color import Color
@@ -163,7 +163,34 @@ class Lobby:
         client.username = username
         client.rating = rating
         _log.info("client %d logged in as %r (rating %d)", client_id, username, rating)
+        target = self._reconnect_seat(username)
+        if target is not None:
+            self._reconnect(client_id, target)
+            return
         self._send(client_id, Welcome(client.color, rating))
+
+    def _reconnect_seat(self, username: str) -> Optional[Tuple[int, Color]]:
+        """Find a game where ``username`` dropped and is still mid-countdown, if any.
+
+        A game only survives a player leaving while the opponent is still watching, so at
+        most one seat is ever missing per game — the colour running the resign countdown.
+        """
+        for game_id, game in self._games.items():
+            color = game.session.disconnected_color()
+            if color is not None and game.session.name_of(color) == username:
+                return game_id, color
+        return None
+
+    def _reconnect(self, client_id: int, target: Tuple[int, Color]) -> None:
+        """Put a returning player back in their seat and cancel the resign countdown."""
+        game_id, color = target
+        client = self._clients[client_id]
+        client.session_id = game_id
+        client.color = color
+        self._games[game_id].session.reconnect()
+        _log.info("client %d reconnected to game %d as %s", client_id, game_id, color.value)
+        self._send(client_id, Welcome(color, client.rating))  # colour set => skip the lobby
+        self._broadcast_state(game_id)  # board to the returner; countdown cleared for both
 
     def _on_play(self, client_id: int) -> None:
         """Handle a "Play" request: try to matchmake this client, else queue it.

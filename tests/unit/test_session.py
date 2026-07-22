@@ -238,3 +238,21 @@ def test_a_disconnect_after_the_game_is_over_starts_no_countdown():
     session.tick(100000)          # game already over by capture
     session.mark_disconnected(Color.WHITE)
     assert session.snapshot().disconnected is None
+
+
+def test_reconnect_cancels_the_countdown():
+    session = rook_session()
+    session.mark_disconnected(Color.BLACK)
+    session.reconnect()
+    snapshot = session.snapshot()
+    assert snapshot.disconnected is None
+    assert snapshot.resign_ms == 0
+
+
+def test_disconnected_color_and_name_expose_the_missing_seat():
+    session = rook_session()
+    session.set_name(Color.BLACK, "Dan")
+    session.mark_disconnected(Color.BLACK)
+    assert session.disconnected_color() is Color.BLACK
+    assert session.name_of(Color.BLACK) == "Dan"
+    assert session.name_of(Color.WHITE) is None  # nobody logged into that seat

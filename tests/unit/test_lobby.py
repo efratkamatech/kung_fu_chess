@@ -433,6 +433,69 @@ def test_a_solo_room_game_that_ends_is_left_unrated():
     assert hub._users.get_rating("Efrat") == START_RATING  # unrated: no opponent
 
 
+# --- reconnect within the countdown -------------------------------------------
+
+def test_reconnecting_within_the_countdown_reseats_the_player():
+    hub, white, black, wid, bid = seat_two()
+    hub.disconnect(bid)  # "Dan" (black) drops -> countdown starts
+    returner = FakeClient()
+    rid = hub.connect(returner.send)
+    login(hub, rid, "Dan")  # same username, still within the window
+
+    assert of_type(returner, Welcome)[-1] == Welcome(Color.BLACK, START_RATING)
+    assert of_type(returner, State)  # got the board back, straight into the game
+
+
+def test_reconnecting_clears_the_opponents_countdown():
+    hub, white, black, wid, bid = seat_two()
+    hub.disconnect(bid)
+    hub.tick(5000)  # the opponent has been watching the countdown
+    assert of_type(white, State)[-1].snapshot.disconnected is Color.BLACK
+
+    login(hub, hub.connect(FakeClient().send), "Dan")
+    assert of_type(white, State)[-1].snapshot.disconnected is None  # countdown cleared
+
+
+def test_a_reconnected_player_can_move_again():
+    hub, white, black, wid, bid = seat_two()
+    hub.disconnect(wid)  # "Efrat" (white) drops
+    returner = FakeClient()
+    rid = hub.connect(returner.send)
+    login(hub, rid, "Efrat")
+
+    hub.receive(rid, encode(Move("WRa1a3")))  # the white rook, now that we are back
+    assert of_type(returner, Rejected) == []                 # accepted
+    assert len(of_type(returner, State)[-1].snapshot.moving) == 1  # rook in flight
+
+
+def test_a_brand_new_user_logs_into_the_lobby_not_a_game():
+    hub, white, black, wid, bid = seat_two()  # a live game, nobody has dropped
+    newbie = FakeClient()
+    login(hub, hub.connect(newbie.send), "Sam")
+    assert of_type(newbie, Welcome)[-1] == Welcome(None, START_RATING)  # -> the lobby
+    assert of_type(newbie, State) == []                                 # not in a game
+
+
+def test_a_different_user_cannot_take_a_missing_seat():
+    hub, white, black, wid, bid = seat_two()
+    hub.disconnect(bid)  # "Dan"'s seat is now the one mid-countdown
+    eve = FakeClient()
+    login(hub, hub.connect(eve.send), "Eve")  # a different person
+    assert of_type(eve, Welcome)[-1] == Welcome(None, START_RATING)  # no reconnect
+
+
+def test_no_reconnect_once_the_countdown_has_expired():
+    from kfchess.config import RESIGN_COUNTDOWN_MS
+
+    hub, white, black, wid, bid = seat_two()
+    hub.disconnect(bid)
+    hub.tick(RESIGN_COUNTDOWN_MS)  # black auto-resigns; the game is over
+    returner = FakeClient()
+    login(hub, hub.connect(returner.send), "Dan")
+    assert of_type(returner, Welcome)[-1].color is None  # -> the lobby, not the old game
+    assert of_type(returner, State) == []                # not reseated
+
+
 # --- cleanup: games are discarded once empty ----------------------------------
 
 def test_a_game_is_discarded_once_every_member_has_left():

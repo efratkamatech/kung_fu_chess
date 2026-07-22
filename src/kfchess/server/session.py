@@ -142,6 +142,19 @@ class GameSession:
         self._resign_ms = 0
         self._bus.publish(GameOver(winner=self._resigned_winner))
 
+    def reconnect(self) -> None:
+        """A disconnected player has returned; cancel the pending resign countdown."""
+        self._disconnected = None
+        self._resign_ms = 0
+
+    def disconnected_color(self) -> Optional[Color]:
+        """The colour whose player has dropped and is mid-countdown, or ``None``."""
+        return self._disconnected
+
+    def name_of(self, color: Color) -> Optional[str]:
+        """The logged-in name recorded for ``color``, or ``None`` if that seat is empty."""
+        return self._names.get(color)
+
     def apply_command(self, color: Color, cmd: str) -> Optional[str]:
         """Apply a move command from ``color``.
 
