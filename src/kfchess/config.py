@@ -141,6 +141,18 @@ USERS_DB = ASSETS_DIR.parent / "users.db"
 START_RATING = 1200   # every new account starts here
 ELO_K = 32            # the ELO K-factor: the most a single game can move a rating
 
+# --- Matchmaking (M5) --------------------------------------------------------
+# Two seekers are paired only if their ratings differ by at most this much; among
+# the candidates in range, the closest rating wins (ties go to the longest waiter).
+MATCH_ELO_RANGE = 100
+# A lone seeker waits at most this long before the client shows "can't find opponent".
+MATCH_TIMEOUT_MS = 60_000
+
+# --- Disconnect handling (M5) ------------------------------------------------
+# When a player's socket drops mid-game, the opponent sees a countdown for this long;
+# if they have not reconnected by the end, they auto-resign and the opponent wins.
+RESIGN_COUNTDOWN_MS = 20_000
+
 # --- Sound effects (played in reaction to bus events) ------------------------
 # Effect names: the SoundEffects subscriber plays one of these per game event.
 SOUND_MOVE = "move"
