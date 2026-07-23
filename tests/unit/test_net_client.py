@@ -6,8 +6,10 @@ from kfchess.protocol import (
     CreateRoom,
     Event,
     JoinRoom,
+    Login,
     Move,
     Notice,
+    Play,
     Rejected,
     Seated,
     State,
@@ -117,20 +119,20 @@ def test_queued_commands_come_back_out_in_order():
     client = NetClient()
     client.queue_command("WQe2e5")
     client.queue_command("BPe7e5")
-    assert client.next_command() == "WQe2e5"
-    assert client.next_command() == "BPe7e5"
+    assert client.next_outgoing() == Move("WQe2e5")
+    assert client.next_outgoing() == Move("BPe7e5")
 
 
 def test_a_queued_login_is_available_to_the_network_thread():
     client = NetClient()
     client.login("Efrat", "secret")
-    assert client.next_login() == ("Efrat", "secret")
+    assert client.next_outgoing() == Login("Efrat", "secret")
 
 
 def test_a_queued_play_is_available_to_the_network_thread():
     client = NetClient()
     client.play()
-    assert client.next_play() is None  # a Play carries no payload
+    assert client.next_outgoing() == Play()  # a Play carries no payload
 
 
 def test_a_seated_message_answers_a_play_with_the_colour():
@@ -152,13 +154,13 @@ def test_starts_with_no_room_id():
 def test_create_room_queues_a_request_for_the_network_thread():
     client = NetClient()
     client.create_room()
-    assert client.next_room_action() == CreateRoom()
+    assert client.next_outgoing() == CreateRoom()
 
 
 def test_join_room_queues_a_request_with_the_room_id():
     client = NetClient()
     client.join_room("7C2F")
-    assert client.next_room_action() == JoinRoom("7C2F")
+    assert client.next_outgoing() == JoinRoom("7C2F")
 
 
 def test_being_seated_via_a_room_records_the_room_id():

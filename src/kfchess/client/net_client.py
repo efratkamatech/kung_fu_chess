@@ -4,9 +4,13 @@ The windowed client's cv2 loop runs on the main thread and must never block on t
 network, so the socket lives on a background thread with its own asyncio loop. This
 class is the bridge between the two threads: the background thread pushes decoded state
 *in* (:meth:`handle`), and the main thread reads the latest snapshot *out*
-(:meth:`latest` / :attr:`color`) and queues commands to send
-(:meth:`queue_command`) — all guarded by a lock so the two threads never corrupt shared
-state.
+(:meth:`latest` / :attr:`color`) and queues messages to send
+(:meth:`queue_command`, :meth:`login`, :meth:`play`, :meth:`create_room`,
+:meth:`join_room`) — all guarded by a lock so the two threads never corrupt shared state.
+
+Everything the client sends rides *one* outbound queue as a ready-made protocol object,
+so a single sender drains it in order and encodes each message the same way; a new
+outbound message type is one more method here, not another queue and sender coroutine.
 
 The decode/store/read logic is synchronous and unit-tested. The thread, the asyncio
 loop, and the WebSocket recv/send are the irreducible I/O and are excluded from
@@ -25,7 +29,10 @@ from kfchess.protocol import (
     CreateRoom,
     Event,
     JoinRoom,
+    Login,
+    Move,
     Notice,
+    Play,
     Rejected,
     Seated,
     State,
@@ -36,7 +43,6 @@ from kfchess.snapshot import GameSnapshot
 
 _log = logging.getLogger(__name__)  # client activity trail; silent until configured
 
-Credentials = Tuple[str, str]  # (username, password)
 # The answer to a "Play" request: ("seated", colour) once matched, or
 # ("notice", reason) — e.g. ("notice", "no_opponent") — if the search timed out.
 MatchResult = Tuple[str, object]
@@ -53,20 +59,19 @@ class NetClient:
         self._room_id: Optional[str] = None
         self._logged_in = False
         self._rejection: Optional[str] = None
-        self._outgoing: "queue.Queue[str]" = queue.Queue()
+        # Every client -> server message waits here as a protocol object, whatever its
+        # kind (a Move, Login, Play, CreateRoom or JoinRoom): the network thread pops
+        # them in order and encodes each one the same way. Keeping a single queue means
+        # a new outbound message type is one more method, not another queue and sender.
+        self._outgoing: "queue.Queue" = queue.Queue()
         # One-shot perception events (sound kinds) queued separately from the
         # snapshot/colour/rejection state above: each is consumed exactly once by
         # next_event(), not just "the latest value", since every one matters.
         self._events: "queue.Queue[str]" = queue.Queue()
-        # Credentials waiting to be sent as Login messages (one per login attempt).
-        self._login_queue: "queue.Queue[Credentials]" = queue.Queue()
         # The outcome of each login attempt: None = accepted, else the refusal reason.
         self._login_results: "queue.Queue[Optional[str]]" = queue.Queue()
-        # "Play" requests waiting to be sent, and the answer to each (seated / notice).
-        self._play_queue: "queue.Queue[None]" = queue.Queue()
+        # The answer to each "Play" / room request (seated / notice).
         self._match_results: "queue.Queue[MatchResult]" = queue.Queue()
-        # Room actions waiting to be sent (a CreateRoom or JoinRoom message object).
-        self._room_queue: "queue.Queue" = queue.Queue()
 
     def handle(self, text: str) -> None:
         """Process one incoming wire message: store the snapshot, colour, or rejection.
@@ -108,7 +113,7 @@ class NetClient:
 
     def queue_command(self, cmd: str) -> None:
         """Queue a move command (e.g. ``"WQe2e5"``) for the network thread to send."""
-        self._outgoing.put(cmd)
+        self._outgoing.put(Move(cmd))
 
     def login(self, username: str, password: str) -> None:
         """Queue a login attempt; the network thread sends it as a Login message.
@@ -116,7 +121,7 @@ class NetClient:
         May be called more than once (retry after a bad password) — each attempt's
         outcome is reported by one :meth:`wait_for_login`.
         """
-        self._login_queue.put((username, password))
+        self._outgoing.put(Login(username, password))
 
     def wait_for_login(self, timeout: Optional[float] = None) -> Optional[str]:
         """Block until the server answers a login attempt.
@@ -126,20 +131,12 @@ class NetClient:
         """
         return self._login_results.get(timeout=timeout)
 
-    def next_login(self, timeout: Optional[float] = None) -> Credentials:
-        """Block until a login attempt is queued and return it (network thread)."""
-        return self._login_queue.get(timeout=timeout)
-
     def play(self) -> None:
         """Queue a "Play" request; the network thread sends it as a Play message.
 
         The answer (matched, or no opponent) is reported by one :meth:`wait_for_match`.
         """
-        self._play_queue.put(None)
-
-    def next_play(self, timeout: Optional[float] = None) -> None:
-        """Block until a "Play" request is queued (network thread); returns nothing."""
-        return self._play_queue.get(timeout=timeout)
+        self._outgoing.put(Play())
 
     def wait_for_match(self, timeout: Optional[float] = None) -> MatchResult:
         """Block until the server answers a "Play", "create room", or "join room" request.
@@ -152,15 +149,11 @@ class NetClient:
 
     def create_room(self) -> None:
         """Queue a "create room" request; the answer comes via :meth:`wait_for_match`."""
-        self._room_queue.put(CreateRoom())
+        self._outgoing.put(CreateRoom())
 
     def join_room(self, room_id: str) -> None:
         """Queue a "join room" request; the answer comes via :meth:`wait_for_match`."""
-        self._room_queue.put(JoinRoom(room_id))
-
-    def next_room_action(self, timeout: Optional[float] = None):
-        """Block until a room action is queued and return it (network thread)."""
-        return self._room_queue.get(timeout=timeout)
+        self._outgoing.put(JoinRoom(room_id))
 
     def next_event(self) -> Optional[str]:
         """The next queued sound-kind event (e.g. ``"capture"``), or ``None`` if none
@@ -170,8 +163,9 @@ class NetClient:
         except queue.Empty:
             return None
 
-    def next_command(self, timeout: Optional[float] = None) -> str:
-        """Block until a queued command is available and return it (network thread)."""
+    def next_outgoing(self, timeout: Optional[float] = None):
+        """Block until a client -> server message is queued and return it (network
+        thread). One accessor for every kind, since they are all sent the same way."""
         return self._outgoing.get(timeout=timeout)
 
     def latest(self) -> Optional[GameSnapshot]:
@@ -219,7 +213,7 @@ class NetClient:
 
         import websockets
 
-        from kfchess.protocol import Login, Move, Play, encode
+        from kfchess.protocol import encode
 
         async with websockets.connect(url) as websocket:
             loop = asyncio.get_event_loop()
@@ -228,26 +222,11 @@ class NetClient:
                 async for text in websocket:
                     self.handle(text)
 
-            async def send_logins() -> None:
-                while True:
-                    username, password = await loop.run_in_executor(None, self.next_login)
-                    await websocket.send(encode(Login(username, password)))
-
-            async def send_plays() -> None:
-                while True:
-                    await loop.run_in_executor(None, self.next_play)
-                    await websocket.send(encode(Play()))
-
-            async def send_rooms() -> None:
-                while True:
-                    action = await loop.run_in_executor(None, self.next_room_action)
-                    await websocket.send(encode(action))
-
             async def transmit() -> None:
+                # Every outbound kind rides one queue, so one sender drains them all in
+                # the order they were queued.
                 while True:
-                    cmd = await loop.run_in_executor(None, self._outgoing.get)
-                    await websocket.send(encode(Move(cmd)))
+                    message = await loop.run_in_executor(None, self.next_outgoing)
+                    await websocket.send(encode(message))
 
-            await asyncio.gather(
-                receive(), send_logins(), send_plays(), send_rooms(), transmit()
-            )
+            await asyncio.gather(receive(), transmit())

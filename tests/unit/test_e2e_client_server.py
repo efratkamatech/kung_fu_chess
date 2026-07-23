@@ -56,7 +56,7 @@ def test_a_move_by_white_reaches_black_through_the_server():
 
     # Send it the real way: queue on the client, pull it off, deliver to the hub.
     white.queue_command(command)
-    hub.receive(white_id, encode(Move(white.next_command())))
+    hub.receive(white_id, encode(white.next_outgoing()))
 
     # Server-authoritative: BOTH clients now see the rook in flight (the moving overlay).
     for client in (white, black):
