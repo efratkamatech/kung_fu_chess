@@ -88,6 +88,26 @@ def test_moving_pieces_reports_in_flight_positions():
     assert arbiter.moving_pieces(2000) == []
 
 
+def test_mover_captures_a_piece_that_settled_earlier_in_the_same_resolve():
+    # One coarse resolve spans two events: a black rook reaches (3,3) and settles
+    # there at t=1000, then a white rook slides across (3,3) later (t=3000..4000) on
+    # its way to (3,5). The white rook must capture the settled black rook it passes
+    # through -- not phase through it. Regression: a settle recorded during a resolve
+    # used to be invisible to a mover crossing that cell within the same resolve.
+    board = Board(8, 8)
+    white, black = rook(Color.WHITE), rook(Color.BLACK)
+    board.place(Position(3, 0), white)
+    board.place(Position(2, 3), black)
+    arbiter = make_arbiter(board, cooldown_ms=0)
+    arbiter.start_motion(black, Position(2, 3), Position(3, 3), now_ms=0)  # arrives (3,3) @1000
+    arbiter.start_motion(white, Position(3, 0), Position(3, 5), now_ms=0)  # crosses (3,3) @3000
+
+    arbiter.resolve(5000)  # a single resolve after both motions have arrived
+
+    assert board.piece_at(Position(3, 3)) is None    # the black rook was captured in passing
+    assert board.piece_at(Position(3, 5)) is white   # the white rook continued to its target
+
+
 def test_start_motion_keeps_piece_at_origin_and_marks_it_moving():
     board = board_with_rook()
     piece = board.piece_at(Position(0, 0))

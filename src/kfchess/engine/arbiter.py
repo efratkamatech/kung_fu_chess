@@ -4,8 +4,8 @@ Owns the in-flight motions, the active jumps, and the landing cooldowns.
 
 Motions: starting one records where a piece is going, when it started, and when it
 arrives (``now + distance * ms_per_cell``); the piece stays at its origin, marked
-MOVING, until then. ``resolve`` applies arrived motions in start order (see the
-collision note below).
+MOVING, until then. ``resolve`` applies what is due in time order (see the collision
+note below).
 
 Jumps: a jump keeps a piece airborne *in place* on its cell (marked JUMPING) until
 ``now + jump_duration_ms``. While airborne, if an enemy moving piece arrives on that
@@ -25,9 +25,15 @@ by swapping head-on into each other's cell (crossing between cells). Each motion
 *later* is the active one: it captures an enemy already there and continues, or — if
 that piece is a friend — cannot enter and stops one cell short. A head-on swap
 crosses between cells and so is always simultaneous; like any exact tie it is settled
-in favour of the piece that started first. This mid-path pass runs first, while every
-mover still sits on its origin; only capturing a *settled* piece on a destination is
-left to the arrival step.
+in favour of the piece that started first. A mover also meets any piece that has
+*settled* on a cell of its path, capturing it in passing (or stopping short of a
+friend).
+
+``resolve`` walks these meetings and the motions' arrivals as one stream of events in
+true time order — earliest first, one at a time, ties going to the meeting — so a piece
+that settles part-way through a window is seen by any motion that crosses its cell later
+in that same window. Settles are stamped with the motion's true arrival time, not the
+coarse ``now``, which is what makes that visible across a single long ``resolve``.
 
 The arbiter knows the board, positions, and time, but not chess legality (judged by
 the RuleEngine before an action starts), pixels, or the text format.
@@ -36,7 +42,7 @@ the RuleEngine before an action starts), pixels, or the text format.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from kfchess.engine.events import GameObserver
 from kfchess.model.board import Board
@@ -242,94 +248,109 @@ class RealTimeArbiter:
         piece.state = PieceState.JUMPING
 
     def resolve(self, now_ms: int) -> None:
-        """Resolve mid-path captures, then apply arrivals and land finished jumps.
+        """Apply everything now due, one event at a time in true time order.
 
-        Order matters: pieces that *met on the way* (two enemies sharing a cell at
-        overlapping times) are eaten first, while every mover still sits on its
-        origin, before any arrival relocates a piece.
+        Each pass takes the single earliest event at or before ``now_ms`` — a mid-path
+        meeting (two enemies sharing a cell, a head-on swap, or a mover reaching a piece
+        that settled on its path) or a motion's arrival — applies just that, then looks
+        again. Interleaving the two kinds *by time* — rather than resolving every meeting
+        and only then every arrival — is what lets a piece that settles part-way through
+        the window be seen by a motion crossing its cell later in the same window. An
+        exact tie goes to the meeting, keeping the "collisions before landings" order.
+        The loop drains because every pass removes a motion or a settled piece.
         """
-        self._resolve_path_collisions(now_ms)
-        arrived = [m for m in self._motions if m.arrival_ms <= now_ms]
-        arrived.sort(key=lambda m: (m.start_ms, m.sequence))
+        while True:
+            collision = self._earliest_collision(now_ms)
+            arrival = self._earliest_arrival(now_ms)
+            if collision is None and arrival is None:
+                break
+            if arrival is None or (
+                collision is not None and collision[0] <= arrival.arrival_ms
+            ):
+                self._apply_collision(collision)
+            else:
+                self._apply_arrival(arrival, now_ms)
 
-        captured: Set[Piece] = set()
-        for motion in arrived:
-            if motion.piece in captured:
-                continue  # captured (and vacated) before its own motion resolved
-
-            defender = self._airborne_defender(
-                motion.target, motion.piece, motion.arrival_ms
-            )
-            if defender is not None:
-                # The airborne jumper captures the arriving enemy; it does not move.
-                self._board.remove(motion.source)
-                captured.add(motion.piece)
-                self._notify_capture(motion.piece)
-                self._land(defender, now_ms)
-                continue
-
-            self._board.remove(motion.source)
-            occupant = self._board.piece_at(motion.target)
-            if occupant is not None and occupant.color == motion.piece.color:
-                # A same-colour piece reached the destination first: you cannot land
-                # on your own, so stop one cell short instead of capturing it.
-                stop_cell = self._cell_before(motion, motion.target)
-                self._board.place(stop_cell, motion.piece)
-                self._settle_ms[stop_cell] = now_ms
-                self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
-                continue
-            if occupant is not None:
-                captured.add(occupant)  # this piece is taken; cancel its motion below
-                self._notify_capture(occupant)  # ends the game too if it was a king
-            self._board.place(motion.target, motion.piece)
-            self._settle_ms[motion.target] = now_ms
-            self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
-            self._promotion.apply(motion.piece, motion.target, self._board)
-
-        # Keep only motions still in flight whose piece was not captured.
-        self._motions = [
-            m
-            for m in self._motions
-            if m.arrival_ms > now_ms and m.piece not in captured
-        ]
-
-        # Land any jumps whose airborne window has ended (with nothing to capture).
+        # Land any jumps whose airborne window has ended (with nothing to capture),
+        # then free every piece whose landing cooldown has now elapsed. A captured
+        # piece's cooldown is dropped when it is captured, so none lingers here.
         for jump in list(self._jumps):
             if jump.end_ms <= now_ms:
                 self._land(jump.piece, now_ms)
-
-        # Free any pieces whose landing cooldown has now elapsed, and forget any
-        # cooling piece that was captured in the meantime.
         for cooldown in self._cooldowns:
-            if cooldown.ready_ms <= now_ms and cooldown.piece not in captured:
+            if cooldown.ready_ms <= now_ms:
                 cooldown.piece.state = PieceState.IDLE
-        self._cooldowns = [
-            c
-            for c in self._cooldowns
-            if c.ready_ms > now_ms and c.piece not in captured
-        ]
+        self._cooldowns = [c for c in self._cooldowns if c.ready_ms > now_ms]
 
-    def _resolve_path_collisions(self, now_ms: int) -> None:
-        """Resolve pieces that meet mid-path, earliest meeting first, until none is
-        left at or before ``now_ms``.
+    def _earliest_arrival(self, now_ms: int) -> Optional[Motion]:
+        """The motion due to arrive earliest at or before ``now_ms``, or ``None``.
 
-        Two motions "meet" when they share a cell during overlapping windows. The
-        piece that reaches that cell *later* is the active one: against an enemy
-        already there it captures it and keeps moving (``_eat``); against a friend it
-        cannot enter and stops one cell short (``_block``). Repeating matters — a
-        winner that continues can meet a further piece down its path.
+        Ties in arrival time go to the motion that *started* first (then to its
+        sequence), so when two pieces land on one cell together the earlier starter
+        takes it and the later one arrives to find it occupied.
         """
-        while True:
-            event = self._earliest_collision(now_ms)
-            if event is None:
-                return
-            _at, kind, motion, cell = event
-            if kind == "eat":
-                self._eat(motion)  # two movers meet: the later one eats the earlier
-            elif kind == "eat_settled":
-                self._eat_settled(cell)  # a mover captures a settled piece and continues
-            else:  # "block": the later mover stops one cell short of a friend
-                self._block(motion, cell, _at)
+        pending = [m for m in self._motions if m.arrival_ms <= now_ms]
+        if not pending:
+            return None
+        return min(pending, key=lambda m: (m.arrival_ms, m.start_ms, m.sequence))
+
+    def _apply_collision(self, event: tuple) -> None:
+        """Apply one mid-path meeting: eat a met mover, capture a settled piece in
+        passing and keep going, or stop one cell short of a friend."""
+        _at, kind, motion, cell = event
+        if kind == "eat":
+            self._eat(motion)  # two movers meet: the later one eats the earlier
+        elif kind == "eat_settled":
+            self._eat_settled(cell)  # a mover captures a settled piece and continues
+        else:  # "block": the later mover stops one cell short of a friend
+            self._block(motion, cell, _at)
+
+    def _apply_arrival(self, motion: Motion, now_ms: int) -> None:
+        """Land one arrived ``motion``: an airborne enemy may eat it, a friend on the
+        target stops it one cell short, an enemy on the target is captured, otherwise it
+        settles on the target (and may promote).
+
+        The piece settles at its *true* ``arrival_ms``, not at the coarse ``now_ms``, so
+        a later mover crossing that cell within this same resolve sees it as settled.
+        """
+        self._motions = [m for m in self._motions if m is not motion]
+        defender = self._airborne_defender(
+            motion.target, motion.piece, motion.arrival_ms
+        )
+        if defender is not None:
+            # The airborne jumper captures the arriving enemy; it does not move.
+            self._board.remove(motion.source)
+            self._notify_capture(motion.piece)
+            self._land(defender, now_ms)
+            return
+
+        self._board.remove(motion.source)
+        occupant = self._board.piece_at(motion.target)
+        if occupant is not None and occupant.color == motion.piece.color:
+            # A same-colour piece holds the destination: you cannot land on your own,
+            # so stop one cell short instead of capturing it.
+            stop_cell = self._cell_before(motion, motion.target)
+            self._board.place(stop_cell, motion.piece)
+            self._settle_ms[stop_cell] = motion.arrival_ms
+            self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
+            return
+        if occupant is not None:
+            self._capture_occupant(occupant)  # taken; drop its motion/cooldown too
+        self._board.place(motion.target, motion.piece)
+        self._settle_ms[motion.target] = motion.arrival_ms
+        self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
+        self._promotion.apply(motion.piece, motion.target, self._board)
+
+    def _capture_occupant(self, occupant: Piece) -> None:
+        """Capture the piece a mover just landed on: notify (ending the game if it was a
+        king) and cancel any motion or cooldown it still held.
+
+        The victim may be a settled piece on cooldown, or a mover still sitting on its
+        origin with a motion in flight; clearing both covers either case.
+        """
+        self._notify_capture(occupant)
+        self._motions = [m for m in self._motions if m.piece is not occupant]
+        self._cooldowns = [c for c in self._cooldowns if c.piece is not occupant]
 
     def _earliest_collision(self, now_ms: int) -> Optional[tuple]:
         """The earliest mid-path meeting among the active motions at or before

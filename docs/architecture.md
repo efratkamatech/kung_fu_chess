@@ -53,13 +53,19 @@ without rewriting the core.
 ## Open (decide later)
 - Wire format (JSON vs binary), Session Actor concurrency primitive
   (asyncio vs other), snapshot/event-log frequency, multi-process scaling.
-- **Unify the collision passes**: the RealTimeArbiter resolves collisions in a
+- ~~**Unify the collision passes**~~ — **done**. The RealTimeArbiter used to run a
   mid-path pass (moving-vs-moving on a shared cell or a head-on swap, plus
-  moving-vs-*settled* along a mover's path, using a per-cell settle time) and an
-  arrival pass (landing, promotion, and capturing a settled piece on a destination).
-  The mid-path settled check has one granularity limitation: if a piece settles onto
-  a mover's path and the mover then passes it **within the same `resolve` call**, the
-  settle is recorded only after that call's mid-path pass, so it is missed until the
-  next `resolve`. In the real command path `resolve` runs once per `wait`, so this
-  only bites a single coarse wait that spans both events. Closing it fully (or the
-  cleaner single time-window model) is deferred as its own refactor.
+  moving-vs-*settled* along a mover's path) and *then* an arrival pass (landing,
+  promotion, capturing a settled piece on a destination). That order had a granularity
+  limitation: a piece settling onto a mover's path within the same `resolve` call was
+  recorded only after the mid-path pass had run, so the mover passed straight through
+  it — and because the settle was stamped with the coarse `now_ms` rather than the true
+  arrival time, the next `resolve` skipped it too.
+
+  `resolve` is now the **single time-window model**: one loop that repeatedly takes the
+  single earliest event at or before `now` — a mid-path meeting or a motion's arrival —
+  applies just that, and looks again, with an exact tie going to the meeting. Settles
+  are stamped with their true `arrival_ms`. Because the two kinds of event are
+  interleaved *by time*, a piece that settles part-way through the window is seen by any
+  motion crossing its cell later in the same window. The loop drains because every pass
+  removes a motion or a settled piece.
