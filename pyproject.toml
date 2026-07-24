@@ -17,10 +17,16 @@ dev = [
     "pytest-cov>=4.1",
     "ruff>=0.14,<0.15",
 ]
-# The networked server. The text/graphics core stays pure stdlib; only the
-# WebSocket server needs this. Installed with:  pip install -e ".[server]"
+# The networked server. The text core stays pure stdlib; only the WebSocket
+# server needs this. Installed with:  pip install -e ".[server]"
 server = [
     "websockets>=12",
+]
+# The windowed game and the networked client render with OpenCV (the text core and
+# the headless server never import it). Installed with:  pip install -e ".[graphics]"
+graphics = [
+    "opencv-python>=4.5",
+    "numpy>=1.21",
 ]
 
 [tool.setuptools.packages.find]
