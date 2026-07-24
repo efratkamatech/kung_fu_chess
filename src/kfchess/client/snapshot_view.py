@@ -22,8 +22,8 @@ from kfchess.model.piece import Piece, PieceState
 from kfchess.model.piece_type import PieceTypeRegistry, standard_piece_types
 from kfchess.model.position import Position
 from kfchess.render_model import MovingPiece
-from kfchess.snapshot import GameSnapshot
-from kfchess.tokens import token_to_piece
+from kfchess.shared.snapshot import GameSnapshot
+from kfchess.shared.tokens import token_to_piece
 
 RenderInputs = Tuple[Board, List[MovingPiece], Dict[Piece, float]]
 

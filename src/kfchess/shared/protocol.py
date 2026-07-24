@@ -6,9 +6,9 @@ packed into a JSON string (:func:`encode`) and read back into a typed object
 (:func:`decode`). Every message carries a ``type`` tag — the same self-describing
 pattern the bus events use with ``topic`` — so the receiver can dispatch on it.
 
-It lives at the package root, beside ``snapshot``, because both the server and the
-client depend on it. It imports only ``json``, the snapshot, and ``Color``, so it stays
-free of the engine, the graphics, and the actual socket library.
+It lives in :mod:`kfchess.shared`, beside ``snapshot``, because it is the vocabulary the
+server and the client both depend on. It imports only ``json``, the snapshot, and
+``Color``, so it stays free of the engine, the graphics, and the actual socket library.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from enum import Enum
 from typing import ClassVar, Optional
 
 from kfchess.model.color import Color
-from kfchess.snapshot import GameSnapshot
+from kfchess.shared.snapshot import GameSnapshot
 
 # --- Message type tags -------------------------------------------------------
 class MessageType(str, Enum):

@@ -3,7 +3,7 @@
 from kfchess.client.controller import ClientController
 from kfchess.model.color import Color
 from kfchess.model.position import Position
-from kfchess.snapshot import CellView, GameSnapshot
+from kfchess.shared.snapshot import CellView, GameSnapshot
 
 
 def snapshot_with(cells):

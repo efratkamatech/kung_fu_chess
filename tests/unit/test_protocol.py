@@ -3,7 +3,7 @@
 import pytest
 
 from kfchess.model.color import Color
-from kfchess.protocol import (
+from kfchess.shared.protocol import (
     CreateRoom,
     Event,
     JoinRoom,
@@ -19,7 +19,7 @@ from kfchess.protocol import (
     decode,
     encode,
 )
-from kfchess.snapshot import CellView, GameSnapshot
+from kfchess.shared.snapshot import CellView, GameSnapshot
 
 
 def a_snapshot():

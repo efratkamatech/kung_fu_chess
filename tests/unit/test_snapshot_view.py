@@ -4,7 +4,7 @@ from kfchess.client.snapshot_view import SnapshotHudSource, to_render_inputs
 from kfchess.model.color import Color
 from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
-from kfchess.snapshot import CellView, GameSnapshot, MovingView
+from kfchess.shared.snapshot import CellView, GameSnapshot, MovingView
 
 
 def a_snapshot():

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from kfchess.algebraic import square_to_position
+from kfchess.shared.algebraic import square_to_position
 from kfchess.model.color import Color
 from kfchess.model.position import Position
 

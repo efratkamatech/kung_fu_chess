@@ -25,7 +25,7 @@ import threading
 from typing import Optional, Tuple
 
 from kfchess.model.color import Color
-from kfchess.protocol import (
+from kfchess.shared.protocol import (
     CreateRoom,
     Event,
     JoinRoom,
@@ -39,7 +39,7 @@ from kfchess.protocol import (
     Welcome,
     decode,
 )
-from kfchess.snapshot import GameSnapshot
+from kfchess.shared.snapshot import GameSnapshot
 
 _log = logging.getLogger(__name__)  # client activity trail; silent until configured
 
@@ -213,7 +213,7 @@ class NetClient:
 
         import websockets
 
-        from kfchess.protocol import encode
+        from kfchess.shared.protocol import encode
 
         async with websockets.connect(url) as websocket:
             loop = asyncio.get_event_loop()

@@ -2,7 +2,7 @@
 
 import pytest
 
-from kfchess.algebraic import build_command, position_to_square, square_to_position
+from kfchess.shared.algebraic import build_command, position_to_square, square_to_position
 from kfchess.model.color import Color
 from kfchess.model.position import Position
 

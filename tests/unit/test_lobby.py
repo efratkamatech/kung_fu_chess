@@ -18,7 +18,7 @@ from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
-from kfchess.protocol import (
+from kfchess.shared.protocol import (
     CreateRoom,
     Event,
     JoinRoom,

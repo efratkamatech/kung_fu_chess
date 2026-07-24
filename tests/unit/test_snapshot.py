@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 
 from kfchess.model.color import Color
-from kfchess.snapshot import CellView, GameSnapshot, MovingView
+from kfchess.shared.snapshot import CellView, GameSnapshot, MovingView
 
 
 def a_snapshot(winner=Color.WHITE):

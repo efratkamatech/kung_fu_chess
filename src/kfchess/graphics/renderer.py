@@ -38,7 +38,7 @@ from kfchess.graphics.piece_view import PieceView
 from kfchess.model.board import Board
 from kfchess.model.piece import Piece, PieceState
 from kfchess.model.position import Position
-from kfchess.tokens import piece_token
+from kfchess.shared.tokens import piece_token
 
 PathLike = Union[str, Path]
 

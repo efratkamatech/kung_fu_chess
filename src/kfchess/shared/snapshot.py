@@ -6,8 +6,8 @@ primitive and model values (tokens, state names, numbers, colours) and no engine
 graphics, or network objects, so it survives a round-trip to JSON and back unchanged.
 
 It is *built* on the server from the live game (step 2.4) and *rebuilt* into drawable
-state on the client (step 2.7); here we define the data and its JSON form. It lives at
-the package root — not under ``engine`` — because it is shared by the server and the
+state on the client (step 2.7); here we define the data and its JSON form. It lives in
+:mod:`kfchess.shared` — not under ``engine`` — because it is shared by the server and the
 client and also carries score/log values, which are not engine concepts. It imports
 only :class:`Color`, so it stays free of every layer above the model.
 """

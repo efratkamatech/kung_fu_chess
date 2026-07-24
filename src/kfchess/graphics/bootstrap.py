@@ -31,7 +31,7 @@ from kfchess.graphics.renderer import BoardRenderer
 from kfchess.graphics.sound import SoundEffects, SoundPlayer
 from kfchess.model.color import Color
 from kfchess.observers import GameBanner, MovesLog, ScoreBoard
-from kfchess.tokens import load_board_csv
+from kfchess.shared.tokens import load_board_csv
 
 
 def build_graphics_app(

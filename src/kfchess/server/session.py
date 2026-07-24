@@ -33,8 +33,8 @@ from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
 from kfchess.observers import GameBanner, MovesLog, ScoreBoard
 from kfchess.server.command_parser import CommandError, parse_command
-from kfchess.snapshot import CellView, GameSnapshot, MovingView
-from kfchess.tokens import piece_token
+from kfchess.shared.snapshot import CellView, GameSnapshot, MovingView
+from kfchess.shared.tokens import piece_token
 
 # The first player to join is white, the second is black (slide 4).
 _JOIN_ORDER = (Color.WHITE, Color.BLACK)

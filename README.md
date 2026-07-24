@@ -75,7 +75,8 @@ python client_main.py --url ws://localhost:8765
 ```
 main.py  graphics_main.py  server_main.py  client_main.py   # the four entry points
 src/kfchess/   # source, organized by layer (model, movement, rules, engine,
-               # graphics, server, client, text_io, …)
+               # server, client, graphics, text_io, and shared/ — the wire
+               # vocabulary the server and client both speak)
 tests/         # unit tests (mirror src) + text-fixture integration tests
 docs/          # architecture.md and walkthroughs
 ```

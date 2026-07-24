@@ -28,7 +28,7 @@ from kfchess.graphics.hud import Hud
 from kfchess.graphics.renderer import BoardRenderer
 from kfchess.graphics.sound import SoundPlayer
 from kfchess.model.color import Color
-from kfchess.tokens import load_board_csv
+from kfchess.shared.tokens import load_board_csv
 
 
 def build_thin_client_app(

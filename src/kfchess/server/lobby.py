@@ -24,7 +24,7 @@ from typing import Callable, List, Optional, Tuple
 
 from kfchess.model.board import Board
 from kfchess.model.color import Color
-from kfchess.protocol import (
+from kfchess.shared.protocol import (
     CreateRoom,
     Event,
     JoinRoom,

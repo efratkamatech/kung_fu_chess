@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from kfchess.algebraic import position_to_square
+from kfchess.shared.algebraic import position_to_square
 from kfchess.bus import topics
 from kfchess.bus.event_bus import EventBus
 from kfchess.model.color import Color
-from kfchess.tokens import piece_token
+from kfchess.shared.tokens import piece_token
 
 # The three phases a game moves through, as far as the start/end banner is concerned.
 START = "start"      # a new game has begun; show the start overlay

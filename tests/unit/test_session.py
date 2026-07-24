@@ -12,7 +12,7 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.server.session import GameSession
-from kfchess.snapshot import CellView
+from kfchess.shared.snapshot import CellView
 
 
 def rook_session():

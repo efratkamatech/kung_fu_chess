@@ -4,7 +4,7 @@ from kfchess.client.app import ThinClientApp
 from kfchess.client.controller import ClientController
 from kfchess.graphics.sound import SoundPlayer
 from kfchess.model.color import Color
-from kfchess.snapshot import CellView, GameSnapshot
+from kfchess.shared.snapshot import CellView, GameSnapshot
 
 _NAMES = {Color.WHITE: "Efrat", Color.BLACK: "Dan"}
 _ESC, _OTHER = 27, ord("x")

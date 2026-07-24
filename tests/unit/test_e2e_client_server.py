@@ -15,7 +15,7 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.model.position import Position
-from kfchess.protocol import Login, Move, Play, encode
+from kfchess.shared.protocol import Login, Move, Play, encode
 from kfchess.server.lobby import Lobby
 from kfchess.server.user_store import UserStore
 

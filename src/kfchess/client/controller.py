@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from kfchess.algebraic import build_command
+from kfchess.shared.algebraic import build_command
 from kfchess.model.color import Color
 from kfchess.model.position import Position
-from kfchess.snapshot import GameSnapshot
+from kfchess.shared.snapshot import GameSnapshot
 
 
 class ClientController:

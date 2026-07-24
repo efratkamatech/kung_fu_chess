@@ -2,7 +2,7 @@
 
 from kfchess.client.net_client import NetClient
 from kfchess.model.color import Color
-from kfchess.protocol import (
+from kfchess.shared.protocol import (
     CreateRoom,
     Event,
     JoinRoom,
@@ -16,7 +16,7 @@ from kfchess.protocol import (
     Welcome,
     encode,
 )
-from kfchess.snapshot import CellView, GameSnapshot
+from kfchess.shared.snapshot import CellView, GameSnapshot
 
 
 def a_snapshot(now_ms=7):

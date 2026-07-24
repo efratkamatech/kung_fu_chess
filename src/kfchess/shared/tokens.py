@@ -5,8 +5,8 @@ prefix (``w``/``b``) plus the piece-type letter — the same string the text pri
 composes and the sprite folders are named by. This module owns that vocabulary and the
 CSV starting-position loader built on it.
 
-It lives at the package root, and imports only the model, because it is pure string and
-file work shared by the text layer, the graphics layer, and the networked server — it
+It lives in :mod:`kfchess.shared`, and imports only the model, because it is pure string
+and file work shared by the text layer, the graphics layer, and the networked server — it
 must not sit in a graphics module that pulls in OpenCV, or a headless server could not
 load a board.
 """
