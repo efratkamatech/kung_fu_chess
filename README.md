@@ -1,5 +1,7 @@
 # Kung Fu Chess
 
+[![CI](https://github.com/efratkamatech/kung_fu_chess/actions/workflows/ci.yml/badge.svg)](https://github.com/efratkamatech/kung_fu_chess/actions/workflows/ci.yml)
+
 Real-time (no-turn) chess variant in Python: pieces move independently with a
 per-piece cooldown; capturing the enemy king ends the game. Single server
 process, in-memory state.
