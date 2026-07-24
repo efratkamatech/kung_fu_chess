@@ -133,6 +133,14 @@ SERVER_PORT = 8765
 # How often the server advances the game and broadcasts a fresh snapshot. ~20/sec
 # keeps in-flight motion looking smooth on the clients.
 SERVER_TICK_MS = 50
+# Transport keepalive (liveness): the server sends a WebSocket ping this often and drops
+# a connection that does not pong within the timeout. This is what notices a *silently*
+# dropped client — a network that vanished without a close frame — and it fires the same
+# disconnect path (and resign countdown) as a clean close. Tighter than the websockets
+# library's ~20s defaults, so a dropped player is caught within ~20s rather than ~40s;
+# an application-level heartbeat on top would only duplicate this.
+WS_PING_INTERVAL_S = 10
+WS_PING_TIMEOUT_S = 10
 
 # --- Accounts and rating (server-side, persisted in SQLite) ------------------
 # Where the users database lives (username, password hash, rating). Resolved at the

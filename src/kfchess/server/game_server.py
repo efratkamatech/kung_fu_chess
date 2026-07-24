@@ -29,7 +29,13 @@ async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
 
     import websockets
 
-    from kfchess.config import SERVER_HOST, SERVER_PORT, SERVER_TICK_MS
+    from kfchess.config import (
+        SERVER_HOST,
+        SERVER_PORT,
+        SERVER_TICK_MS,
+        WS_PING_INTERVAL_S,
+        WS_PING_TIMEOUT_S,
+    )
     from kfchess.server.lobby import Lobby
     from kfchess.server.user_store import UserStore
 
@@ -58,5 +64,13 @@ async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
             await asyncio.sleep(tick_ms / 1000)
             hub.tick(tick_ms)
 
-    async with websockets.serve(handler, host, port):
+    async with websockets.serve(
+        handler,
+        host,
+        port,
+        # Keepalive so a silently dropped client is noticed (and its resign countdown
+        # started) within ~20s, not the library's ~40s default.
+        ping_interval=WS_PING_INTERVAL_S,
+        ping_timeout=WS_PING_TIMEOUT_S,
+    ):
         await ticker()
