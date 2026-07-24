@@ -7,12 +7,12 @@ to make noise (a real beep, or silence) is decided separately from *when* (the e
 :class:`SoundPlayer` is silent by default — the same no-op-base convention as
 ``GameObserver`` — so tests and the text path make no sound. The windowed launcher
 injects a :class:`WinsoundPlayer`, which beeps via the Windows ``winsound`` module and
-so needs no audio-asset files.
+so needs no audio-asset files. ``winsound`` is imported lazily, inside the one method
+that beeps, so this module (and the silent default player) still import on non-Windows
+systems — the game simply runs without sound there.
 """
 
 from __future__ import annotations
-
-import winsound
 
 from kfchess.bus import topics
 from kfchess.bus.event_bus import EventBus
@@ -36,6 +36,8 @@ class WinsoundPlayer(SoundPlayer):
     """A real player: a short beep per effect via the Windows ``winsound`` module."""
 
     def play(self, sound: str) -> None:  # pragma: no cover  (irreducible audio I/O)
+        import winsound  # Windows-only; imported here so the module loads anywhere
+
         frequency, duration_ms = WINSOUND_TONES[sound]
         winsound.Beep(frequency, duration_ms)
 
