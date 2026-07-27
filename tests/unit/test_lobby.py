@@ -36,6 +36,7 @@ from kfchess.shared.protocol import (
 from kfchess.server.game_server import serve
 from kfchess.server.lobby import Lobby
 from kfchess.server.user_store import UserStore
+from kfchess.shared.codes import NoticeReason, RejectReason
 
 
 class FakeClient:
@@ -127,7 +128,7 @@ def test_a_wrong_password_is_refused_and_can_be_retried():
     second = FakeClient()
     sid = hub.connect(second.send)
     login(hub, sid, "Efrat", "wrong")
-    assert second.received[-1] == Rejected("bad_password")
+    assert second.received[-1] == Rejected(RejectReason.BAD_PASSWORD)
     assert of_type(second, Welcome) == []
 
     login(hub, sid, "Efrat", "secret")  # retry, same connection
@@ -199,7 +200,7 @@ def test_a_lone_seeker_is_told_no_opponent_after_the_timeout():
     login(hub, cid, "Efrat")
     hub.receive(cid, encode(Play()))
     hub.tick(MATCH_TIMEOUT_MS)
-    assert of_type(client, Notice)[-1] == Notice("no_opponent")
+    assert of_type(client, Notice)[-1] == Notice(NoticeReason.NO_OPPONENT)
 
 
 # --- moves and routing --------------------------------------------------------
@@ -210,7 +211,7 @@ def test_a_move_before_being_in_a_game_is_rejected():
     cid = hub.connect(client.send)
     login(hub, cid, "Efrat")  # in the lobby, but not in a game
     hub.receive(cid, encode(Move("WRa1a3")))
-    assert client.received[-1] == Rejected("not_a_player")
+    assert client.received[-1] == Rejected(RejectReason.NOT_A_PLAYER)
 
 
 def test_a_legal_move_broadcasts_an_event_and_state_to_both_players():
@@ -261,7 +262,7 @@ def test_garbage_and_non_client_messages_are_ignored():
     cid = hub.connect(client.send)
     before = len(client.received)
     hub.receive(cid, "not json at all")            # unparseable
-    hub.receive(cid, encode(Rejected("whatever")))  # valid, but not a client message
+    hub.receive(cid, encode(Rejected(RejectReason.BAD_PASSWORD)))  # valid, not a client msg
     assert len(client.received) == before
 
 
@@ -383,7 +384,7 @@ def test_a_spectator_cannot_move():
     hub.receive(wid, encode(JoinRoom(room_id)))
 
     hub.receive(wid, encode(Move("WRa1a3")))
-    assert watcher.received[-1] == Rejected("not_a_player")
+    assert watcher.received[-1] == Rejected(RejectReason.NOT_A_PLAYER)
 
 
 def test_a_spectator_still_sees_the_game_state():
@@ -404,7 +405,7 @@ def test_joining_an_unknown_room_is_refused():
     hub = make_lobby()
     client, cid = login_ready(hub, "Efrat")
     hub.receive(cid, encode(JoinRoom("ZZZZ")))
-    assert client.received[-1] == Notice("no_such_room")
+    assert client.received[-1] == Notice(NoticeReason.NO_SUCH_ROOM)
 
 
 def test_creating_or_joining_a_room_before_logging_in_is_ignored():

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from kfchess.model.color import Color
+from kfchess.shared.codes import Phase
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ class GameSnapshot:
     logs: Dict[Color, List[str]]
     names: Dict[Color, str]                # only colours that have logged in so far
     ratings: Dict[Color, int]              # ELO rating per logged-in colour
-    phase: str                             # "start" / "playing" / "over"
+    phase: Phase
     winner: Optional[Color]
     now_ms: int
     # Disconnect handling (M5): the colour whose player has dropped, plus the ms left on
@@ -125,7 +126,7 @@ class GameSnapshot:
             logs=logs,
             names=names,
             ratings=ratings,
-            phase=data["phase"],
+            phase=Phase(data["phase"]),
             winner=winner,
             now_ms=data["now_ms"],
             disconnected=disconnected,

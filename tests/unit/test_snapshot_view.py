@@ -5,6 +5,7 @@ from kfchess.model.color import Color
 from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
 from kfchess.shared.snapshot import CellView, GameSnapshot, MovingView
+from kfchess.shared.codes import Phase
 
 
 def a_snapshot():
@@ -20,7 +21,7 @@ def a_snapshot():
         logs={Color.WHITE: ["wP a2 -> a4", "x bN"], Color.BLACK: []},
         names={},
         ratings={},
-        phase="playing",
+        phase=Phase.PLAYING,
         winner=None,
         now_ms=5,
     )

@@ -24,6 +24,7 @@ from typing import Callable, List, Optional, Tuple
 
 from kfchess.model.board import Board
 from kfchess.model.color import Color
+from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
     CreateRoom,
     Event,
@@ -157,7 +158,7 @@ class Lobby:
         rating = self._users.register_or_login(username, password)
         if rating is None:
             _log.info("client %d login refused for %r", client_id, username)
-            self._send(client_id, Rejected("bad_password"))
+            self._send(client_id, Rejected(RejectReason.BAD_PASSWORD))
             return
         client = self._clients[client_id]
         client.username = username
@@ -240,7 +241,7 @@ class Lobby:
         game_id = self._rooms.game_for(room_id)
         if game_id is None:
             _log.info("client %d tried to join unknown room %s", client_id, room_id)
-            self._send(client_id, Notice("no_such_room"))
+            self._send(client_id, Notice(NoticeReason.NO_SUCH_ROOM))
             return
         self._matchmaker.cancel(client_id)
         _log.info("client %d joined room %s (game %d)", client_id, room_id, game_id)
@@ -277,7 +278,7 @@ class Lobby:
         """Apply a move to the sender's game, or refuse it, telling only that game."""
         client = self._clients[client_id]
         if client.session_id is None or client.color is None:
-            self._send(client_id, Rejected("not_a_player"))  # spectators cannot move
+            self._send(client_id, Rejected(RejectReason.NOT_A_PLAYER))  # spectators cannot move
             return
         game = self._games[client.session_id]
         reason = game.session.apply_command(client.color, cmd)
@@ -306,7 +307,7 @@ class Lobby:
             self._broadcast_state(game_id)
         for client_id in self._matchmaker.tick(dt_ms):
             _log.info("client %d matchmaking timed out", client_id)
-            self._send(client_id, Notice("no_opponent"))
+            self._send(client_id, Notice(NoticeReason.NO_OPPONENT))
 
     def _maybe_record_result(self, game_id: int) -> None:
         """When a game has just ended, apply the ELO update once and show the new ratings.

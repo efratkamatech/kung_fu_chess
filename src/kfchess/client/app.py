@@ -15,6 +15,7 @@ import math
 from kfchess.config import HUD_TEXT_COLOR, PANEL_BG
 from kfchess.graphics.img import Img
 from kfchess.graphics.sound import SoundPlayer
+from kfchess.shared.codes import Phase
 from kfchess.model.position import Position
 from kfchess.client.controller import ClientController
 from kfchess.client.net_client import NetClient
@@ -79,7 +80,7 @@ class ThinClientApp:
         which colour dropped and the ms left on their auto-resign countdown, which we
         round up to whole seconds for the message.
         """
-        if snapshot.disconnected is None or snapshot.phase == "over":
+        if snapshot.disconnected is None or snapshot.phase is Phase.OVER:
             return None
         seconds = math.ceil(snapshot.resign_ms / 1000)
         return f"Opponent disconnected -- resigning in {seconds}s"
@@ -122,11 +123,11 @@ class ThinClientApp:
         frame = self._renderer.render(
             board, moving, snapshot.now_ms, self._controller.selected, cooldowns
         )
-        if snapshot.phase == "over":
+        if snapshot.phase is Phase.OVER:
             self._renderer.draw_game_over(
                 frame, self._winner_text(snapshot), "[Esc] Quit"
             )
-        elif snapshot.phase == "start":
+        elif snapshot.phase is Phase.START:
             self._renderer.draw_start_banner(
                 frame, "KungFu Chess", "Click your piece to move"
             )

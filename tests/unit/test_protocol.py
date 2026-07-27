@@ -20,6 +20,7 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.shared.snapshot import CellView, GameSnapshot
+from kfchess.shared.codes import NoticeReason, Phase, RejectReason
 
 
 def a_snapshot():
@@ -32,7 +33,7 @@ def a_snapshot():
         logs={Color.WHITE: [], Color.BLACK: []},
         names={},
         ratings={},
-        phase="playing",
+        phase=Phase.PLAYING,
         winner=None,
         now_ms=0,
     )
@@ -45,14 +46,14 @@ def a_snapshot():
         Login("Efrat", "secret"),
         Welcome(Color.WHITE, 1200),
         Welcome(None, 1350),  # a spectator: no colour
-        Rejected("bad_password"),
+        Rejected(RejectReason.BAD_PASSWORD),
         State(a_snapshot()),
         Event("capture"),
         Play(),
         Seated(Color.WHITE),
         Seated(None),  # a spectator: no colour
         Seated(Color.BLACK, "7C2F"),  # seated via a room, with its id
-        Notice("no_opponent"),
+        Notice(NoticeReason.NO_OPPONENT),
         CreateRoom(),
         JoinRoom("7C2F"),
     ],

@@ -33,6 +33,7 @@ from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
 from kfchess.observers import GameBanner, MovesLog, ScoreBoard
 from kfchess.server.command_parser import CommandError, parse_command
+from kfchess.shared.codes import RejectReason
 from kfchess.shared.snapshot import CellView, GameSnapshot, MovingView
 from kfchess.shared.tokens import piece_token
 
@@ -155,30 +156,32 @@ class GameSession:
         """The logged-in name recorded for ``color``, or ``None`` if that seat is empty."""
         return self._names.get(color)
 
-    def apply_command(self, color: Color, cmd: str) -> Optional[str]:
+    def apply_command(self, color: Color, cmd: str) -> Optional[RejectReason]:
         """Apply a move command from ``color``.
 
-        Returns ``None`` if the move was accepted, or a short reason string if it was
-        refused (game already over, bad format, not your colour/piece, empty source, or
-        illegal move).
+        Returns ``None`` if the move was accepted, or the :class:`RejectReason` it was
+        refused for (game already over, unparseable command, not your colour/piece,
+        empty source, or illegal move).
         """
         if self.is_over():
-            return "game_over"
+            return RejectReason.GAME_OVER
         try:
             move = parse_command(cmd, self._engine.board.rows, self._engine.board.cols)
-        except CommandError as error:
-            return str(error)
+        except CommandError:
+            # The parser's specific complaint is dropped: the Lobby logs the rejected
+            # command alongside this code, which is enough to diagnose one.
+            return RejectReason.BAD_COMMAND
         if move.color is not color:
-            return "not_your_colour"
+            return RejectReason.NOT_YOUR_COLOUR
         piece = self._engine.board.piece_at(move.source)
         if piece is None:
-            return "empty_source"
+            return RejectReason.EMPTY_SOURCE
         if piece.color is not color:
-            return "not_your_piece"
+            return RejectReason.NOT_YOUR_PIECE
         if piece.piece_type.letter != move.piece_letter:
-            return "wrong_piece"
+            return RejectReason.WRONG_PIECE
         if not self._engine.request_move(move.source, move.target):
-            return "illegal_move"
+            return RejectReason.ILLEGAL_MOVE
         return None
 
     def tick(self, dt_ms: int) -> None:

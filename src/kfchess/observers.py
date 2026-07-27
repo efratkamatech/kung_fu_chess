@@ -16,12 +16,8 @@ from kfchess.shared.algebraic import position_to_square
 from kfchess.bus import topics
 from kfchess.bus.event_bus import EventBus
 from kfchess.model.color import Color
+from kfchess.shared.codes import Phase
 from kfchess.shared.tokens import piece_token
-
-# The three phases a game moves through, as far as the start/end banner is concerned.
-START = "start"      # a new game has begun; show the start overlay
-PLAYING = "playing"  # the first move has been made; no overlay
-OVER = "over"        # a king was captured; show the game-over overlay
 
 
 class MovesLog:
@@ -88,7 +84,7 @@ class GameBanner:
     __slots__ = ("_phase",)
 
     def __init__(self) -> None:
-        self._phase = PLAYING  # neutral until a GAME_STARTED event arrives
+        self._phase = Phase.PLAYING  # neutral until a GAME_STARTED event arrives
 
     def subscribe(self, bus: EventBus) -> None:
         """Advance the phase on game start, the first move, and game over."""
@@ -97,26 +93,26 @@ class GameBanner:
         bus.subscribe(topics.GAME_OVER, self._on_over)
 
     def _on_start(self, event) -> None:
-        self._phase = START
+        self._phase = Phase.START
 
     def _on_move(self, event) -> None:
-        if self._phase == START:  # the first move dismisses the start overlay
-            self._phase = PLAYING
+        if self._phase is Phase.START:  # the first move dismisses the start overlay
+            self._phase = Phase.PLAYING
 
     def _on_over(self, event) -> None:
-        self._phase = OVER
+        self._phase = Phase.OVER
 
     @property
-    def phase(self) -> str:
-        """The current phase: ``"start"``, ``"playing"``, or ``"over"``."""
+    def phase(self) -> Phase:
+        """The current phase."""
         return self._phase
 
     @property
     def show_start(self) -> bool:
         """True while the start overlay should be shown."""
-        return self._phase == START
+        return self._phase is Phase.START
 
     @property
     def is_over(self) -> bool:
         """True once the game-over overlay should be shown."""
-        return self._phase == OVER
+        return self._phase is Phase.OVER

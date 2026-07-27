@@ -19,6 +19,7 @@ from enum import Enum
 from typing import ClassVar, Optional
 
 from kfchess.model.color import Color
+from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.snapshot import GameSnapshot
 
 # --- Message type tags -------------------------------------------------------
@@ -123,17 +124,17 @@ class State:
 
 @dataclass(frozen=True)
 class Rejected:
-    """Server -> client: the last move was refused; ``reason`` says why."""
+    """Server -> client: the last move (or login) was refused; ``reason`` says why."""
 
     type: ClassVar[MessageType] = MessageType.REJECTED
-    reason: str
+    reason: RejectReason
 
     def to_dict(self) -> dict:
         return {"type": self.type, "reason": self.reason}
 
     @classmethod
     def from_dict(cls, data: dict) -> "Rejected":
-        return cls(data["reason"])
+        return cls(RejectReason(data["reason"]))
 
 
 @dataclass(frozen=True)
@@ -241,19 +242,19 @@ class Notice:
     """Server -> client: a lobby-level notice, identified by a short ``reason`` code.
 
     Used for things that are neither game state nor a rejected action — chiefly
-    ``"no_opponent"`` when a matchmaking search times out, which the client turns into a
-    "can't find opponent" popup.
+    :attr:`~kfchess.shared.codes.NoticeReason.NO_OPPONENT` when a matchmaking search
+    times out, which the client turns into a "can't find opponent" popup.
     """
 
     type: ClassVar[MessageType] = MessageType.NOTICE
-    reason: str
+    reason: NoticeReason
 
     def to_dict(self) -> dict:
         return {"type": self.type, "reason": self.reason}
 
     @classmethod
     def from_dict(cls, data: dict) -> "Notice":
-        return cls(data["reason"])
+        return cls(NoticeReason(data["reason"]))
 
 
 # Dispatch table: message tag -> the class that reads it. Keyed by the enum members,

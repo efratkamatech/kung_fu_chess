@@ -4,6 +4,7 @@ from kfchess.client.controller import ClientController
 from kfchess.model.color import Color
 from kfchess.model.position import Position
 from kfchess.shared.snapshot import CellView, GameSnapshot
+from kfchess.shared.codes import Phase
 
 
 def snapshot_with(cells):
@@ -16,7 +17,7 @@ def snapshot_with(cells):
         logs={Color.WHITE: [], Color.BLACK: []},
         names={},
         ratings={},
-        phase="playing",
+        phase=Phase.PLAYING,
         winner=None,
         now_ms=0,
     )

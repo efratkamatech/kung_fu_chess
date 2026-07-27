@@ -17,6 +17,7 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.shared.snapshot import CellView, GameSnapshot
+from kfchess.shared.codes import NoticeReason, Phase, RejectReason
 
 
 def a_snapshot(now_ms=7):
@@ -29,7 +30,7 @@ def a_snapshot(now_ms=7):
         logs={Color.WHITE: [], Color.BLACK: []},
         names={},
         ratings={},
-        phase="playing",
+        phase=Phase.PLAYING,
         winner=None,
         now_ms=now_ms,
     )
@@ -102,8 +103,8 @@ def test_a_welcome_reports_login_success():
 
 def test_a_rejection_before_login_is_a_login_failure():
     client = NetClient()
-    client.handle(encode(Rejected("bad_password")))
-    assert client.wait_for_login() == "bad_password"  # not a move rejection
+    client.handle(encode(Rejected(RejectReason.BAD_PASSWORD)))
+    assert client.wait_for_login() == RejectReason.BAD_PASSWORD  # not a move rejection
     assert client.take_rejection() is None            # so the move-rejection slot stays clear
 
 
@@ -143,8 +144,8 @@ def test_a_seated_message_answers_a_play_with_the_colour():
 
 def test_a_notice_answers_a_play_with_its_reason():
     client = NetClient()
-    client.handle(encode(Notice("no_opponent")))
-    assert client.wait_for_match() == ("notice", "no_opponent")
+    client.handle(encode(Notice(NoticeReason.NO_OPPONENT)))
+    assert client.wait_for_match() == ("notice", NoticeReason.NO_OPPONENT)
 
 
 def test_starts_with_no_room_id():

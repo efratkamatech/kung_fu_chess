@@ -5,6 +5,7 @@ from kfchess.client.controller import ClientController
 from kfchess.graphics.sound import SoundPlayer
 from kfchess.model.color import Color
 from kfchess.shared.snapshot import CellView, GameSnapshot
+from kfchess.shared.codes import Phase
 
 _NAMES = {Color.WHITE: "Efrat", Color.BLACK: "Dan"}
 _ESC, _OTHER = 27, ord("x")
@@ -39,7 +40,7 @@ class SpyPlayer(SoundPlayer):
         self.played.append(sound)
 
 
-def a_snapshot(winner=None, phase="playing", disconnected=None, resign_ms=0):
+def a_snapshot(winner=None, phase=Phase.PLAYING, disconnected=None, resign_ms=0):
     # white rook at (1,0)=a1, black king at (0,1)=b2, on a 2x2 board
     return GameSnapshot(
         rows=2,
@@ -107,7 +108,7 @@ def test_no_countdown_text_when_nobody_has_disconnected():
 
 def test_no_countdown_text_once_the_game_is_over():
     app = an_app(FakeNet())
-    snapshot = a_snapshot(phase="over", disconnected=Color.BLACK, resign_ms=5000)
+    snapshot = a_snapshot(phase=Phase.OVER, disconnected=Color.BLACK, resign_ms=5000)
     assert app._countdown_text(snapshot) is None
 
 
