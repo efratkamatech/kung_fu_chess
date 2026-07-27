@@ -77,9 +77,9 @@ def lobby_loop(
         else:
             notify("Please choose p, c, or j.")
             continue
-        kind, reason = net.wait_for_match()
-        if kind == "seated":
+        result = net.wait_for_match()
+        if result.seated:
             if net.room_id is not None:
                 notify(f"You're in room {net.room_id} -- share it with a friend.")
             return
-        notify(f"Couldn't start a game ({reason}). Let's try again.")
+        notify(f"Couldn't start a game ({result.reason}). Let's try again.")

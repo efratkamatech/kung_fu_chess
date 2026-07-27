@@ -1,6 +1,6 @@
 """Tests for NetClient's synchronous bridge logic (no sockets, no threads)."""
 
-from kfchess.client.net_client import NetClient
+from kfchess.client.net_client import MatchResult, NetClient
 from kfchess.model.color import Color
 from kfchess.shared.protocol import (
     CreateRoom,
@@ -139,13 +139,13 @@ def test_a_queued_play_is_available_to_the_network_thread():
 def test_a_seated_message_answers_a_play_with_the_colour():
     client = NetClient()
     client.handle(encode(Seated(Color.WHITE)))
-    assert client.wait_for_match() == ("seated", Color.WHITE)
+    assert client.wait_for_match() == MatchResult.seat(Color.WHITE)
 
 
 def test_a_notice_answers_a_play_with_its_reason():
     client = NetClient()
     client.handle(encode(Notice(NoticeReason.NO_OPPONENT)))
-    assert client.wait_for_match() == ("notice", NoticeReason.NO_OPPONENT)
+    assert client.wait_for_match() == MatchResult.refused(NoticeReason.NO_OPPONENT)
 
 
 def test_starts_with_no_room_id():

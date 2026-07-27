@@ -7,6 +7,8 @@ from kfchess.client.home_screen import (
     login_loop,
 )
 from kfchess.model.color import Color
+from kfchess.shared.codes import NoticeReason
+from kfchess.client.net_client import MatchResult
 
 
 def canned(*answers):
@@ -93,13 +95,13 @@ class LobbyNet:
 
 
 def test_lobby_loop_play_returns_once_seated():
-    net = LobbyNet([("seated", Color.WHITE)])
+    net = LobbyNet([MatchResult.seat(Color.WHITE)])
     lobby_loop(net, read_line=canned("p"), notify=lambda m: None)
     assert net.plays == 1
 
 
 def test_lobby_loop_create_room_announces_the_room_id():
-    net = LobbyNet([("seated", Color.WHITE)], room_id="7C2F")
+    net = LobbyNet([MatchResult.seat(Color.WHITE)], room_id="7C2F")
     notes = []
     lobby_loop(net, read_line=canned("c"), notify=notes.append)
     assert net.creates == 1
@@ -107,13 +109,13 @@ def test_lobby_loop_create_room_announces_the_room_id():
 
 
 def test_lobby_loop_join_room_sends_the_typed_id():
-    net = LobbyNet([("seated", Color.BLACK)])
+    net = LobbyNet([MatchResult.seat(Color.BLACK)])
     lobby_loop(net, read_line=canned("j", "7C2F"), notify=lambda m: None)
     assert net.joins == ["7C2F"]
 
 
 def test_lobby_loop_reprompts_on_an_unknown_choice():
-    net = LobbyNet([("seated", Color.WHITE)])
+    net = LobbyNet([MatchResult.seat(Color.WHITE)])
     notes = []
     lobby_loop(net, read_line=canned("x", "p"), notify=notes.append)
     assert net.plays == 1
@@ -121,7 +123,7 @@ def test_lobby_loop_reprompts_on_an_unknown_choice():
 
 
 def test_lobby_loop_retries_after_a_failed_start():
-    net = LobbyNet([("notice", "no_opponent"), ("seated", Color.BLACK)])
+    net = LobbyNet([MatchResult.refused(NoticeReason.NO_OPPONENT), MatchResult.seat(Color.BLACK)])
     notes = []
     lobby_loop(net, read_line=canned("p", "p"), notify=notes.append)
     assert net.plays == 2

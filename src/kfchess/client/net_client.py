@@ -22,9 +22,11 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Optional
 
 from kfchess.model.color import Color
+from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
     CreateRoom,
     Event,
@@ -43,9 +45,35 @@ from kfchess.shared.snapshot import GameSnapshot
 
 _log = logging.getLogger(__name__)  # client activity trail; silent until configured
 
-# The answer to a "Play" request: ("seated", colour) once matched, or
-# ("notice", reason) — e.g. ("notice", "no_opponent") — if the search timed out.
-MatchResult = Tuple[str, object]
+@dataclass(frozen=True)
+class MatchResult:
+    """The server's answer to a "Play", "create room", or "join room" request.
+
+    It is exactly one of two things, and :attr:`seated` says which: a seat in a game, or
+    the reason no game could be started. Build it through :meth:`seat` / :meth:`refused`
+    rather than by hand, so the two never blur into each other.
+
+    Note that ``color`` is ``None`` on a seat too — that is a spectator, who is seated
+    and watching. Only ``reason`` distinguishes the two outcomes.
+    """
+
+    color: Optional[Color] = None
+    reason: Optional[NoticeReason] = None
+
+    @classmethod
+    def seat(cls, color: Optional[Color]) -> "MatchResult":
+        """Placed in a game as ``color`` (``None`` means seated as a spectator)."""
+        return cls(color=color)
+
+    @classmethod
+    def refused(cls, reason: NoticeReason) -> "MatchResult":
+        """No game was started, for this reason; the caller can offer the menu again."""
+        return cls(reason=reason)
+
+    @property
+    def seated(self) -> bool:
+        """Whether this answer placed the client in a game."""
+        return self.reason is None
 
 
 class NetClient:
@@ -69,8 +97,8 @@ class NetClient:
         # next_event(), not just "the latest value", since every one matters.
         self._events: "queue.Queue[str]" = queue.Queue()
         # The outcome of each login attempt: None = accepted, else the refusal reason.
-        self._login_results: "queue.Queue[Optional[str]]" = queue.Queue()
-        # The answer to each "Play" / room request (seated / notice).
+        self._login_results: "queue.Queue[Optional[RejectReason]]" = queue.Queue()
+        # The answer to each "Play" / room request (a seat, or why there is none).
         self._match_results: "queue.Queue[MatchResult]" = queue.Queue()
 
     def handle(self, text: str) -> None:
@@ -95,11 +123,11 @@ class NetClient:
                 self._color = message.color  # put in a game as this colour (None = watcher)
                 self._room_id = message.room_id  # set when seated via a room
                 _log.info("seated as %s in room %s", message.color, message.room_id)
-                self._match_results.put(("seated", message.color))
+                self._match_results.put(MatchResult.seat(message.color))
             elif isinstance(message, Notice):
-                # A lobby notice (e.g. "no_opponent") answers a pending Play request.
+                # A lobby notice answers a pending Play / room request.
                 _log.info("lobby notice: %s", message.reason)
-                self._match_results.put(("notice", message.reason))
+                self._match_results.put(MatchResult.refused(message.reason))
             elif isinstance(message, Rejected):
                 # Before logging in, a rejection means the login was refused (bad
                 # password); after, it means a move was refused.
@@ -123,11 +151,11 @@ class NetClient:
         """
         self._outgoing.put(Login(username, password))
 
-    def wait_for_login(self, timeout: Optional[float] = None) -> Optional[str]:
+    def wait_for_login(self, timeout: Optional[float] = None) -> Optional[RejectReason]:
         """Block until the server answers a login attempt.
 
-        Returns ``None`` if it was accepted, or the refusal reason (e.g.
-        ``"bad_password"``) if not — the caller can then prompt again and retry.
+        Returns ``None`` if it was accepted, or the :class:`RejectReason` it was refused
+        for (in practice ``BAD_PASSWORD``) — the caller can then prompt again and retry.
         """
         return self._login_results.get(timeout=timeout)
 
@@ -141,9 +169,8 @@ class NetClient:
     def wait_for_match(self, timeout: Optional[float] = None) -> MatchResult:
         """Block until the server answers a "Play", "create room", or "join room" request.
 
-        Returns ``("seated", colour)`` once placed in a game (``colour`` is ``None`` for
-        a spectator), or ``("notice", reason)`` — e.g. ``"no_opponent"`` or
-        ``"no_such_room"`` — so the caller can prompt the player to try again.
+        Returns a :class:`MatchResult`: a seat once placed in a game, or a refusal
+        carrying the reason, so the caller can prompt the player to try again.
         """
         return self._match_results.get(timeout=timeout)
 

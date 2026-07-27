@@ -20,7 +20,20 @@ from __future__ import annotations
 from enum import Enum
 
 
-class Phase(str, Enum):
+class WireEnum(str, Enum):
+    """Base for the wire vocabularies: a member renders as its value, not its name.
+
+    Since Python 3.11 an ``str``-mixin enum formats as ``"ClassName.MEMBER"`` under
+    ``str()``, ``%s`` and f-strings, even though it *is* its value under ``==`` and
+    ``json.dumps``. That split is a trap: it silently turned a player-facing
+    "Couldn't start a game (no_opponent)" into "(NoticeReason.NO_OPPONENT)". Restoring
+    ``str``'s own ``__str__`` makes every rendering path agree with the wire again.
+    """
+
+    __str__ = str.__str__
+
+
+class Phase(WireEnum):
     """The three phases a game moves through, as the banner and snapshot see it."""
 
     START = "start"      # a new game has begun; show the start overlay
@@ -28,7 +41,7 @@ class Phase(str, Enum):
     OVER = "over"        # a king was captured; show the game-over overlay
 
 
-class RejectReason(str, Enum):
+class RejectReason(WireEnum):
     """Why the server refused something a client asked for.
 
     Carried by :class:`~kfchess.shared.protocol.Rejected`. The first two answer a
@@ -50,7 +63,7 @@ class RejectReason(str, Enum):
     ILLEGAL_MOVE = "illegal_move"        # move: that piece cannot reach the target
 
 
-class NoticeReason(str, Enum):
+class NoticeReason(WireEnum):
     """A lobby-level outcome that is neither game state nor a refused action.
 
     Carried by :class:`~kfchess.shared.protocol.Notice`: the client turns each into a

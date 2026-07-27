@@ -15,21 +15,21 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import Enum
 from typing import ClassVar, Optional
 
 from kfchess.model.color import Color
-from kfchess.shared.codes import NoticeReason, RejectReason
+from kfchess.shared.codes import NoticeReason, RejectReason, WireEnum
 from kfchess.shared.snapshot import GameSnapshot
 
 # --- Message type tags -------------------------------------------------------
-class MessageType(str, Enum):
+class MessageType(WireEnum):
     """Every wire message's ``type`` tag, in one place.
 
-    Subclassing ``str`` keeps the wire format unchanged: each member *is* its lowercase
-    string (``MessageType.MOVE == "move"``), so ``json.dumps`` writes the plain tag and a
-    plain string decoded from JSON matches the enum member on lookup. Code gains a single,
-    typo-proof vocabulary with editor completion instead of scattered string literals.
+    Subclassing ``str`` (via :class:`WireEnum`) keeps the wire format unchanged: each
+    member *is* its lowercase string (``MessageType.MOVE == "move"``), so ``json.dumps``
+    writes the plain tag and a plain string decoded from JSON matches the enum member on
+    lookup. Code gains a single, typo-proof vocabulary with editor completion instead of
+    scattered string literals.
     """
 
     MOVE = "move"                # client -> server: a move command such as "WQe2e5"
