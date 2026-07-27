@@ -85,11 +85,8 @@ def build_graphics_app(
     # The mouse maps to the full canvas (left panel + board + right panel); the board
     # sits PANEL_PX from the left, so clicks are shifted by that offset and panel
     # clicks fall off the board (the Controller ignores them).
-    canvas_size = (PANEL_PX + board_w + PANEL_PX, board_h)
     feedback = ClickFeedback()  # shared: the mouse writes the red flash, the loop reads it
-    mouse = MouseInput(
-        controller, window_name, canvas_size, board_x_offset=PANEL_PX, feedback=feedback
-    )
+    mouse = MouseInput(controller, window_name, board_x_offset=PANEL_PX, feedback=feedback)
     player_names = {Color.WHITE: white_name, Color.BLACK: black_name}
     return GraphicsApp(
         engine, controller, renderer, mouse, feedback, player_names, window_name,

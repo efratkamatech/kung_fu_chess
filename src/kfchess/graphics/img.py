@@ -303,16 +303,6 @@ class Img:
         """Register ``callback(event, x, y, flags, param)`` for mouse events on a window."""
         cv2.setMouseCallback(window_name, callback)
 
-    @staticmethod
-    def window_image_size(window_name: str) -> Tuple[int, int]:  # pragma: no cover
-        """The current on-screen size ``(width, height)`` of the window's image area.
-
-        Used to scale mouse coordinates: when the window is resized this differs from
-        the board's pixel size. Returns ``(0, 0)`` if the window has no size yet.
-        """
-        _x, _y, width, height = cv2.getWindowImageRect(window_name)
-        return max(0, width), max(0, height)
-
     # --- internals -----------------------------------------------------------
 
     def _require(self) -> np.ndarray:

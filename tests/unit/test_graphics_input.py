@@ -2,24 +2,9 @@ from kfchess.app.bootstrap import build_game
 from kfchess.config import BOARD_CSV
 from kfchess.shared.tokens import load_board_csv
 from kfchess.graphics.img import Img
-from kfchess.graphics.input import ClickFeedback, MouseInput, window_to_board
+from kfchess.graphics.input import ClickFeedback, MouseInput
 from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
-
-
-# --- pure pixel scaling ------------------------------------------------------
-
-def test_scales_window_pixels_to_board_pixels():
-    # A window shown at twice the board size halves click coordinates.
-    assert window_to_board(800, 800, (1600, 1600), (800, 800)) == (400, 400)
-
-
-def test_identity_when_window_equals_board():
-    assert window_to_board(150, 750, (800, 800), (800, 800)) == (150, 750)
-
-
-def test_passes_through_when_window_size_unknown():
-    assert window_to_board(150, 750, (0, 0), (800, 800)) == (150, 750)
 
 
 # --- red-flash feedback ------------------------------------------------------
@@ -35,13 +20,12 @@ def test_click_feedback_reports_the_cell_until_it_expires():
     assert expired.current() is None
 
 
-# --- mouse routing (window size stubbed so scaling is identity) --------------
+# --- mouse routing (cv2 hands the callback board pixels already) -------------
 
 def a_mouse(monkeypatch):
-    monkeypatch.setattr(Img, "window_image_size", staticmethod(lambda name: (800, 800)))
     engine, controller = build_game(load_board_csv(BOARD_CSV))
     feedback = ClickFeedback(duration_s=999)
-    mouse = MouseInput(controller, "win", (800, 800), board_x_offset=0, feedback=feedback)
+    mouse = MouseInput(controller, "win", board_x_offset=0, feedback=feedback)
     return engine, controller, mouse, feedback
 
 

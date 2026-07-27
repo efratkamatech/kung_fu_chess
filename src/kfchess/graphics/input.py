@@ -6,10 +6,10 @@ position into board pixels and hands it to the existing :class:`Controller` — 
 selection-and-move logic the text path uses. Left click = select / move, right click =
 jump in place.
 
-The one graphics-specific concern is **screen pixels vs. image pixels**: the window is
-resizable, so a click arrives in *window* coordinates that must be scaled back to the
-board's pixel size before the Controller (which thinks in board pixels) sees it.
-:func:`window_to_board` is that scaling, kept pure so it can be unit-tested.
+Clicks arrive already in *image* pixels: OpenCV scales them itself when a
+``WINDOW_NORMAL`` window is shown at a size other than the image's, so the callback
+sees board pixels no matter how the user has dragged the window. Scaling them a second
+time here is what broke clicks on a shrunk window, so we pass them straight through.
 """
 
 from __future__ import annotations
@@ -47,22 +47,6 @@ class ClickFeedback:
         return None
 
 
-def window_to_board(
-    x: int, y: int, window_size: Tuple[int, int], board_size: Tuple[int, int]
-) -> Tuple[int, int]:
-    """Scale a click at window pixel ``(x, y)`` to board pixels.
-
-    ``window_size`` is the window's current on-screen image size, ``board_size`` the
-    rendered board's pixel size. If the window size is unknown yet (``0``), the click
-    is passed through unscaled.
-    """
-    win_w, win_h = window_size
-    board_w, board_h = board_size
-    if win_w <= 0 or win_h <= 0:
-        return int(x), int(y)
-    return int(x * board_w / win_w), int(y * board_h / win_h)
-
-
 class MouseInput:
     """Registers a mouse callback and routes clicks to the Controller in board pixels."""
 
@@ -70,13 +54,11 @@ class MouseInput:
         self,
         controller: Controller,
         window_name: str,
-        canvas_size: Tuple[int, int],
         board_x_offset: int = 0,
         feedback: Optional[ClickFeedback] = None,
     ) -> None:
         self._controller = controller
         self._window_name = window_name
-        self._canvas_size = canvas_size  # (width, height) of the whole rendered canvas
         self._board_x_offset = board_x_offset  # left panel width to subtract off clicks
         self._feedback = feedback or ClickFeedback()
 
@@ -101,8 +83,6 @@ class MouseInput:
             self._controller.jump(board_x, board_y)
 
     def _to_board(self, x: int, y: int) -> Tuple[int, int]:
-        window_size = Img.window_image_size(self._window_name)
-        canvas_x, canvas_y = window_to_board(x, y, window_size, self._canvas_size)
         # Shift into board-local pixels; a click in a side panel lands off the board
         # (negative or past the last column), which the Controller ignores.
-        return canvas_x - self._board_x_offset, canvas_y
+        return int(x) - self._board_x_offset, int(y)

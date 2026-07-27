@@ -14,7 +14,6 @@ import math
 
 from kfchess.config import HUD_TEXT_COLOR, PANEL_BG
 from kfchess.graphics.img import Img
-from kfchess.graphics.input import window_to_board
 from kfchess.graphics.sound import SoundPlayer
 from kfchess.model.position import Position
 from kfchess.client.controller import ClientController
@@ -156,7 +155,5 @@ class ThinClientApp:
 
     def _on_mouse(self, event, x, y, flags, param):  # pragma: no cover  (cv2 callback)
         if event == Img.MOUSE_LEFT_DOWN:
-            canvas_x, canvas_y = window_to_board(
-                x, y, Img.window_image_size(self._window_name), self._canvas_size
-            )
-            self._handle_click(canvas_x, canvas_y)
+            # Already in canvas pixels: cv2 scales clicks for a resized WINDOW_NORMAL.
+            self._handle_click(int(x), int(y))
