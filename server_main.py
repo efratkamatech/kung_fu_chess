@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from kfchess.config import BOARD_CSV, SERVER_LOG  # noqa: E402
 from kfchess.logging_setup import configure_logging  # noqa: E402
 from kfchess.server.game_server import serve  # noqa: E402
-from kfchess.tokens import load_board_csv  # noqa: E402
+from kfchess.shared.tokens import load_board_csv  # noqa: E402
 
 
 def main() -> None:
