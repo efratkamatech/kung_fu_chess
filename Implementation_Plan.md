@@ -97,7 +97,7 @@ wire format stays JSON; `encode` / `decode` are unchanged in shape.
 | `Captured` | `at_sq, victim_token, by_piece_id, at_ms` | a `cells` diff in `State` |
 | `Blocked` | `piece_id, at_sq, at_ms` | a `cells` diff in `State` |
 | `CooldownDone` | `at_sq, at_ms` | the `cooldown` field in `CellView` |
-| `GameOver` | `winner, at_ms` | `phase` + `winner` in `State` |
+| `GameOver` | `winner, new_ratings, at_ms` | `phase` + `winner` + `ratings` in `State` |
 | `Scored` | `color, score` | `scores` in `State` |
 
 `State` (the full snapshot) **is kept**, with a narrower role: seating, reconnect, and a
@@ -118,6 +118,19 @@ SNAPSHOT_RESYNC_MS = 10_000
 `move_started`, `capture`, `game_started`, `game_over`. Widen `drain_events()` into
 `drain_deltas() -> List[Message]` so the same subscription produces protocol messages
 rather than bare strings.
+
+**`src/kfchess/bus/publisher.py`** — one event has to start carrying more.
+`BusPublisher.on_game_over()` currently publishes `GameOver()` with **`winner=None`**,
+because today the winner is read off the snapshot instead. With no snapshot every tick,
+the event must carry the winner itself.
+
+**`src/kfchess/server/session.py`, again — the rating goes out with the result.**
+`updated_ratings()` in `server/rating.py` is a pure function, and the session already
+holds both players' ratings from `set_rating`. So the shard computes the new ELO locally
+and puts it straight into the `GameOver` delta; the results consumer persists the same
+numbers later. The player sees her new rating in milliseconds and never waits on the
+database. This works only because the ELO arithmetic lives outside `UserStore` — keep it
+that way.
 
 **`src/kfchess/server/lobby.py`** — `_broadcast_state` becomes:
 

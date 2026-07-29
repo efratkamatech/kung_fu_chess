@@ -923,13 +923,21 @@ sequenceDiagram
     Note over WS: every 10 s: full snapshot resync
 
     SH->>SH: king captured -> game over
-    SH->>N: publish room.{id}.delta game_over {winner}
+    Note over SH: updated_ratings() is pure -<br/>the shard computes the new ELO itself,<br/>without waiting for the database
+
+    SH->>N: publish room.{id}.delta<br/>game_over {winner, new_ratings}
+    N->>WS: deliver
+    WS-->>C1: game_over
+    WS-->>C2: game_over
+    Note over C1,C2: the players see the result here,<br/>milliseconds after the capture
+
     SH->>N: publish game.finished (JetStream, persistent)
     SH->>R: DEL room:{id}, player:{...}
 
     N->>CO: deliver (batched)
-    CO->>PG: COPY games + rating updates (thousands at once)
+    CO->>PG: COPY games + the same rating values (thousands at once)
     CO->>OBJ: PUT move history blob (one per game)
+    Note over CO,PG: seconds later, and nobody is waiting
 ```
 
 **Key points to notice:**
@@ -937,10 +945,23 @@ sequenceDiagram
 - A single 33-byte move produces one ~70-byte delta, not 20 full snapshots per second.
 - Between `move_started` and `captured` the server sends **nothing**. Both clients
   animate from the same deterministic function.
+- **Who tells the client it won?** The shard, and nobody else — it owns the arbiter that
+  detected the king capture. It publishes **two separate messages on two subjects with
+  two different guarantees**: `game_over` on `room.{id}.delta` reaches the players in
+  milliseconds over ordinary pub/sub, while `game.finished` goes to the database over
+  JetStream, batched, seconds later. **The player never waits for the database.** At
+  83,000 games ending per second, a shard that blocked on a disk write would be blocked
+  83,000 times a second.
+- **The new rating travels with `game_over`.** `updated_ratings()` in `server/rating.py`
+  is a pure function and the shard already holds both players' ratings from seating, so
+  it computes the result locally and sends it immediately; the consumer later persists
+  exactly the same numbers. This only works because ELO arithmetic lives outside
+  `UserStore` — had it been a database method, the shard could not have done this.
 - `game.finished` goes over **JetStream** (persistent), not plain pub/sub — losing it
   would mean losing a rating update.
-- The Postgres write is **batched and off the hot path**. The player sees "you won" from
-  the delta, not from the database.
+- **One thing to change in the existing code:** `BusPublisher.on_game_over()` today
+  publishes `GameOver()` with `winner=None`, because the winner is read off the snapshot
+  instead. Once there is no snapshot every tick, the delta must carry the winner itself.
 
 ### 4.3 Disconnect and reconnect
 
