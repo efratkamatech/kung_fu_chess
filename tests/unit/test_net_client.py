@@ -159,6 +159,21 @@ def test_a_notice_answers_a_play_with_its_reason():
     assert client.wait_for_match() == MatchResult.refused(NoticeReason.NO_OPPONENT)
 
 
+def test_waiting_too_long_for_a_game_reads_as_no_opponent():
+    """Giving up moved to this side when the shared queue stopped sweeping itself.
+
+    The server no longer counts anybody's patience — that was the one per-tick cost that
+    grew with the number of people *not* playing — so the answer a player used to be sent
+    at this moment is now the answer she reaches on her own clock. It is the same answer,
+    and the lobby menu handles it the same way.
+    """
+    client = NetClient()
+
+    assert client.wait_for_match(timeout=0.01) == MatchResult.refused(
+        NoticeReason.NO_OPPONENT
+    )
+
+
 def test_starts_with_no_room_id():
     assert NetClient().room_id is None
 

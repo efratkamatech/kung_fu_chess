@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from kfchess.client.game_state import GAME_MESSAGES, ClientGameState, ServerClock
+from kfchess.config import MATCH_TIMEOUT_MS
 from kfchess.model.color import Color
 from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
@@ -180,8 +181,21 @@ class NetClient:
 
         Returns a :class:`MatchResult`: a seat once placed in a game, or a refusal
         carrying the reason, so the caller can prompt the player to try again.
+
+        **Giving up is decided here, not by the server.** The waiting queue is shared by
+        every shard and nothing sweeps it — a server that counts down each waiter's
+        patience does work proportional to the number of people *not* playing. So the
+        patience is measured on this side, where there is exactly one clock per player
+        and it is already running. Waiting past ``timeout`` reads as "no opponent",
+        which is the same answer the server used to send at the same moment.
         """
-        return self._match_results.get(timeout=timeout)
+        try:
+            return self._match_results.get(
+                timeout=MATCH_TIMEOUT_MS / 1000 if timeout is None else timeout
+            )
+        except queue.Empty:
+            _log.info("gave up waiting for a game")
+            return MatchResult.refused(NoticeReason.NO_OPPONENT)
 
     def create_room(self) -> None:
         """Queue a "create room" request; the answer comes via :meth:`wait_for_match`."""

@@ -37,7 +37,7 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.server.lobby import Lobby
-from kfchess.services.rooms import Rooms
+from kfchess.services.shared import SharedState
 from kfchess.server.user_store import UserStore
 from kfchess.shared.codes import NoticeReason, RejectReason
 
@@ -194,7 +194,14 @@ def test_pressing_play_again_while_already_in_a_game_is_ignored():
     assert len(white.received) == before
 
 
-def test_a_lone_seeker_is_told_no_opponent_after_the_timeout():
+def test_ticking_does_not_walk_the_people_who_are_waiting():
+    """The queue is not swept. A lone seeker is left alone, however long the clock runs.
+
+    This is a cost decision, not an oversight: sweeping is the one piece of per-tick work
+    that grows with the number of people *waiting*, so the busiest moment a lobby has —
+    thousands queued, nobody yet playing — used to be its most expensive. Giving up is
+    now measured on the player's own client, and those are as numerous as the players.
+    """
     from kfchess.config import MATCH_TIMEOUT_MS
 
     hub = make_lobby()
@@ -202,8 +209,36 @@ def test_a_lone_seeker_is_told_no_opponent_after_the_timeout():
     cid = hub.connect(client.send)
     login(hub, cid, "Efrat")
     hub.receive(cid, encode(Play()))
-    hub.tick(MATCH_TIMEOUT_MS)
-    assert of_type(client, Notice)[-1] == Notice(NoticeReason.NO_OPPONENT)
+
+    hub.tick(MATCH_TIMEOUT_MS * 10)
+
+    assert of_type(client, Notice) == []
+    assert of_type(client, Seated) == []
+
+
+def test_a_player_who_gave_up_waiting_can_press_play_again():
+    """What replaces the timeout: her client stops listening and offers the menu again.
+
+    The server was never told she gave up — that is the point — so pressing Play must
+    start a fresh search rather than be ignored as a search already in progress.
+    """
+    from kfchess.config import MATCH_TIMEOUT_MS
+
+    now = [1_000_000]
+    hub = Lobby(
+        _rook_board, UserStore(":memory:"), SharedState.on(now_ms=lambda: now[0])
+    )
+    lone, lone_id = login_ready(hub, "Efrat")
+    hub.receive(lone_id, encode(Play()))
+
+    now[0] += MATCH_TIMEOUT_MS  # she waits it out and her client gives up
+    hub.receive(lone_id, encode(Play()))  # ...and she tries again
+
+    other, other_id = login_ready(hub, "Dan")
+    hub.receive(other_id, encode(Play()))
+
+    assert of_type(lone, Seated)[-1] == Seated(Color.WHITE)  # the second search worked
+    assert of_type(other, Seated)[-1] == Seated(Color.BLACK)
 
 
 # --- moves and routing --------------------------------------------------------
@@ -287,6 +322,21 @@ def test_garbage_and_non_client_messages_are_ignored():
 def test_a_message_from_an_unknown_client_is_ignored_safely():
     hub = make_lobby()
     hub.receive(999, encode(Move("WRa1a3")))  # no such client id -- must not raise
+
+
+def test_disconnecting_a_client_who_never_logged_in_is_safe():
+    """Nothing to take out of the queue: she has no name to be in it under."""
+    hub = make_lobby()
+    client = FakeClient()
+
+    hub.disconnect(hub.connect(client.send))  # connected, never said who she was
+
+    assert client.received == []
+
+
+def test_disconnecting_an_unknown_client_is_ignored():
+    """Two closes for one socket, or a stale one — neither may take the server down."""
+    make_lobby().disconnect(999)
 
 
 def test_disconnecting_a_waiting_seeker_removes_them_from_the_queue():
@@ -604,7 +654,7 @@ def test_a_second_busier_game_pulls_the_wake_up_earlier():
 # --- rooms: the id space running out ------------------------------------------
 
 def test_a_room_that_cannot_get_an_id_is_refused_instead_of_hanging():
-    hub = Lobby(_rook_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"))
+    hub = Lobby(_rook_board, UserStore(":memory:"), SharedState.on(generate_id=lambda: "AAAAAA"))
     first, first_id = login_ready(hub, "Efrat")
     hub.receive(first_id, encode(CreateRoom()))  # takes the only id there is
     assert of_type(first, Seated)[-1].room_id == "AAAAAA"
@@ -618,7 +668,7 @@ def test_a_room_that_cannot_get_an_id_is_refused_instead_of_hanging():
 
 def test_a_refused_room_leaves_the_player_free_to_do_something_else():
     """The half-made game is dropped, so the player is still in the lobby, not stuck."""
-    hub = Lobby(_rook_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"))
+    hub = Lobby(_rook_board, UserStore(":memory:"), SharedState.on(generate_id=lambda: "AAAAAA"))
     _, first_id = login_ready(hub, "Efrat")
     hub.receive(first_id, encode(CreateRoom()))  # takes the only id there is
     refused, refused_id = login_ready(hub, "Dan")
@@ -637,7 +687,7 @@ def test_a_refused_room_leaves_the_player_free_to_do_something_else():
 def test_a_rooms_traffic_is_published_once_however_many_are_watching():
     """Running as a shard: two players and two spectators cost one message, not four."""
     published = []
-    hub = Lobby(_rook_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"),
+    hub = Lobby(_rook_board, UserStore(":memory:"), SharedState.on(generate_id=lambda: "AAAAAA"),
                 to_room=lambda subject, text: published.append((subject, text)))
     creator, cid = login_ready(hub, "Efrat")
     hub.receive(cid, encode(CreateRoom()))

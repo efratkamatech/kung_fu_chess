@@ -47,6 +47,8 @@ QUEUE = "mm:waiting"
 # Which member is which, and what proves a seeker is still there.
 _JOINED_DIGITS = 13  # milliseconds since the epoch, to the year 2286
 _SEPARATOR = ":"
+# How much longer a seeker's own record lives than her patience — see :meth:`_add`.
+_SEEKER_TTL_FACTOR = 2
 
 
 def wall_clock_ms() -> int:
@@ -113,6 +115,11 @@ class Matchmaker:
         if partner is not None:
             self._remove(partner)
             return Match(white=partner.username, black=username)
+        # Whatever this player left in the queue last time goes first. She may have given
+        # up waiting and come back: her old entry is still in the ranking (nothing sweeps
+        # it), and a player listed twice under two arrival times is one somebody can be
+        # paired with at an address she is no longer answering.
+        self.cancel(username)
         self._add(Waiter(username, rating, self._now_ms()))
         return None
 
@@ -128,8 +135,15 @@ class Matchmaker:
             self._remove(waiter)
 
     def is_waiting(self, username: str) -> bool:
-        """Whether ``username`` is in the queue right now."""
-        return self._waiting(username) is not None
+        """Whether ``username`` is still *actively* waiting for a game.
+
+        A player past the give-up point is not: her client has stopped listening and
+        offered her the menu again, so pressing Play must start a fresh search rather
+        than be ignored as a duplicate. She is still in the ranking until somebody trips
+        over her, and :meth:`seek` clears that entry before adding the new one.
+        """
+        waiter = self._waiting(username)
+        return waiter is not None and not self._has_given_up(waiter)
 
     # --- the search -----------------------------------------------------------
 
@@ -178,10 +192,15 @@ class Matchmaker:
         self._store.add_to_ranking(QUEUE, waiter.member, waiter.rating)
         # A second key, so that cancelling and "am I waiting?" are one lookup by name.
         # The ranking cannot answer those: it is indexed by rating, not by who.
+        #
+        # It deliberately outlives the give-up point, rather than expiring with it. This
+        # is the only record of *where* in the ranking a player is, and the ranking entry
+        # can outlive the give-up point too — so letting this expire first would strand
+        # one, findable by nobody and removable by nobody but the next passing search.
         self._store.set(
             _seeker_key(waiter.username),
             f"{waiter.joined_ms}{_SEPARATOR}{waiter.rating}",
-            ttl_s=self._timeout_ms // 1000,
+            ttl_s=_SEEKER_TTL_FACTOR * self._timeout_ms // 1000,
         )
 
     def _remove(self, waiter: Waiter) -> None:

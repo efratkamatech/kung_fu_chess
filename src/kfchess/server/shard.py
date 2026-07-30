@@ -35,7 +35,7 @@ from kfchess.bus.envelope import (
     encode,
 )
 from kfchess.server.lobby import Lobby, NewBoard
-from kfchess.services.rooms import Rooms
+from kfchess.services.shared import SharedState
 from kfchess.server.user_store import UserStore
 
 _log = logging.getLogger(__name__)  # silent until configure_logging runs
@@ -49,10 +49,10 @@ class Shard:
         bus,
         new_board: NewBoard,
         users: UserStore,
-        rooms: Optional[Rooms] = None,
+        shared: Optional[SharedState] = None,
     ) -> None:
         self._bus = bus
-        self._hub = Lobby(new_board, users, rooms, to_room=self._publish)
+        self._hub = Lobby(new_board, users, shared, to_room=self._publish)
         # conn_id -> the lobby's own client number, and the room that connection has
         # already been told to follow. Both are dropped when the socket closes.
         self._client_of: Dict[str, int] = {}

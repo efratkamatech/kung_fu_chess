@@ -42,9 +42,9 @@ from kfchess.shared.protocol import (
     decode,
     encode,
 )
-from kfchess.server.matchmaker import Matchmaker
 from kfchess.server.session import GameSession
-from kfchess.services.rooms import RoomIdUnavailable, Rooms
+from kfchess.services.rooms import RoomIdUnavailable
+from kfchess.services.shared import SharedState
 from kfchess.server.user_store import UserStore
 
 Send = Callable[[str], None]      # how the lobby pushes one wire string to one client
@@ -85,7 +85,7 @@ class Lobby:
         self,
         new_board: NewBoard,
         users: UserStore,
-        rooms: Optional[Rooms] = None,
+        shared: Optional[SharedState] = None,
         to_room: Optional[ToRoom] = None,
     ) -> None:
         self._new_board = new_board
@@ -96,12 +96,18 @@ class Lobby:
         # them. Injected, so the same hub runs as one process (the default below) or as
         # a shard publishing to a subject.
         self._to_room = to_room if to_room is not None else self._send_to_members
-        self._matchmaker = Matchmaker()
-        # Injected, for the same reason as the room sink above: the default claims its
-        # ids in this process, and one built on a shared store claims them against every
-        # other shard. A test hands over one with a known (or exhausted) id sequence.
-        self._rooms = rooms if rooms is not None else Rooms()
+        # Injected, for the same reason as the room sink above: the default keeps the
+        # queue and the room ids in this process, and one built on a shared store keeps
+        # them where every other shard can see them. The lobby cannot tell which it got.
+        shared = shared if shared is not None else SharedState.on()
+        self._matchmaker = shared.matchmaker
+        self._rooms = shared.rooms
+        self._directory = shared.directory
         self._clients: dict[int, _Client] = {}
+        # Who, of the players waiting in that shared queue, is one of mine. The queue
+        # deals in usernames, because a client number means something only in the process
+        # that issued it; this is the way back from the one to the other.
+        self._seeking: dict[str, int] = {}
         self._games: dict[int, _LiveGame] = {}
         # Who is in each game, kept up to date as clients are seated and leave. It used
         # to be recomputed by scanning every client on the server -- twice per game, per
@@ -131,9 +137,11 @@ class Lobby:
         opponent keeps seeing the board with a countdown, and wins by default if the
         player does not come back before it runs out (auto-resign, applied in :meth:`tick`).
         """
-        self._matchmaker.cancel(client_id)
         client = self._clients.get(client_id)
-        game_id = client.session_id if client is not None else None
+        if client is None:
+            return  # one we never knew, or have already forgotten
+        self._stop_seeking(client)
+        game_id = client.session_id
         if game_id is not None and client.color is not None:
             self._games[game_id].session.mark_disconnected(client.color)
         self._clients.pop(client_id, None)
@@ -263,19 +271,33 @@ class Lobby:
         """Handle a "Play" request: try to matchmake this client, else queue it.
 
         Ignored (idempotently) if the client has not logged in, is already in a game, or
-        is already searching. A pairing starts a new game at once; otherwise the client
-        waits and will either be matched by a later seeker or time out in :meth:`tick`.
+        is already searching. A pairing starts a new game at once; otherwise the player
+        joins the shared queue and waits for a later seeker to find her.
+
+        **Nothing here times her out.** The queue is not swept — counting down every
+        waiter's clock twenty times a second is the one cost that grows with the number
+        of people waiting rather than the number playing — so a player who is not matched
+        gives up on her own client's clock, and the entry she leaves behind is removed by
+        the next search that trips over it.
         """
         client = self._clients[client_id]
         if client.username is None or client.rating is None:
             return  # must be logged in to seek a game
         if client.session_id is not None:
             return  # already playing
-        if self._matchmaker.is_waiting(client_id):
+        if self._matchmaker.is_waiting(client.username):
             return  # already searching
-        match = self._matchmaker.seek(client_id, client.rating)
+        self._seeking[client.username] = client_id
+        match = self._matchmaker.seek(client.username, client.rating)
         if match is not None:
-            self._start_game(match.white, match.black)
+            self._start_game(self._seeking.pop(match.white), self._seeking.pop(match.black))
+
+    def _stop_seeking(self, client: _Client) -> None:
+        """Take a client out of the shared queue, if she is in it and has a name to be in
+        it under. A no-op for anyone who never pressed Play."""
+        if client.username is not None:
+            self._matchmaker.cancel(client.username)
+            self._seeking.pop(client.username, None)
 
     def _start_game(self, white_id: int, black_id: int) -> None:
         """Create a game, seat the two matched clients, and show them the board."""
@@ -295,7 +317,7 @@ class Lobby:
         client = self._clients[client_id]
         if client.username is None or client.session_id is not None:
             return
-        self._matchmaker.cancel(client_id)  # opening a room ends any pending search
+        self._stop_seeking(client)  # opening a room ends any pending search
         game_id = self._new_game()
         try:
             room_id = self._rooms.create(game_id)
@@ -320,7 +342,7 @@ class Lobby:
             _log.info("client %d tried to join unknown room %s", client_id, room_id)
             self._send(client_id, Notice(NoticeReason.NO_SUCH_ROOM))
             return
-        self._matchmaker.cancel(client_id)
+        self._stop_seeking(client)
         _log.info("client %d joined room %s (game %d)", client_id, room_id, game_id)
         self._seat(client_id, game_id, room_id)  # BLACK, then None (a spectator)
         self._broadcast(game_id)
@@ -393,22 +415,23 @@ class Lobby:
     # --- time ----------------------------------------------------------------
 
     def tick(self, dt_ms: int) -> None:
-        """Advance every game and the matchmaking clock by ``dt_ms``.
+        """Advance every game by ``dt_ms``.
 
         Each game resolves its arrivals, records a finished result once, and sends its
         own members whatever actually happened — usually nothing at all, since a tick
-        where no piece arrives and no cooldown ends produces no messages. Any matchmaking
-        search that has now waited too long is told no opponent was found (and has
-        already been dropped from the queue).
+        where no piece arrives and no cooldown ends produces no messages.
+
+        The people *waiting* for a game are no longer part of this. They used to be: each
+        tick walked every waiter and advanced her clock, so the busiest moment — a queue
+        with thousands in it and nobody yet playing — was also the most expensive one.
+        Their patience is now measured on their own clients' clocks, which are exactly as
+        numerous as the players themselves.
         """
         for game_id, game in self._games.items():
             game.session.tick(dt_ms)
             self._maybe_record_result(game_id)
             self._broadcast(game_id)
             self._resync_if_due(game_id, dt_ms)
-        for client_id in self._matchmaker.tick(dt_ms):
-            _log.info("client %d matchmaking timed out", client_id)
-            self._send(client_id, Notice(NoticeReason.NO_OPPONENT))
 
     def next_event_delay_ms(self) -> Optional[int]:
         """The shortest wait before any game needs a tick, or ``None`` if all are idle.

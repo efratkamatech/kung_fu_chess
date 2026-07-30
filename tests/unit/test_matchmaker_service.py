@@ -175,3 +175,48 @@ def test_a_username_with_a_colon_in_it_still_round_trips():
 def test_the_default_clock_is_the_time_of_day():
     """Two shards have to agree who waited longer, so it cannot be a per-process clock."""
     assert wall_clock_ms() > 1_700_000_000_000  # a real epoch time, not an uptime
+
+
+# --- coming back after giving up ----------------------------------------------
+
+def test_a_waiter_past_the_timeout_is_no_longer_actively_waiting():
+    """Her client has stopped listening, so the server must not call her "searching"."""
+    matchmaker, _, now = a_matchmaker()
+    matchmaker.seek("Efrat", 1200)
+
+    now[0] += MATCH_TIMEOUT_MS
+
+    assert not matchmaker.is_waiting("Efrat")
+
+
+def test_seeking_again_after_giving_up_replaces_the_old_entry():
+    """Otherwise she is in the ranking twice, and one of them is an address she left.
+
+    Nothing sweeps the queue, so her first entry outlives her patience. If a second seek
+    simply added another, a later seeker could be paired with the stale one — and the
+    removal that follows would delete the record belonging to the live one.
+    """
+    matchmaker, store, now = a_matchmaker()
+    matchmaker.seek("Efrat", 1200)
+    first_member = Waiter("Efrat", 1200, now[0]).member
+
+    now[0] += MATCH_TIMEOUT_MS
+    matchmaker.seek("Efrat", 1200)  # she pressed Play again
+
+    assert store.first_in_range(QUEUE, 1200, 1200) == (
+        Waiter("Efrat", 1200, now[0]).member,
+        1200,
+    )
+    assert matchmaker.is_waiting("Efrat")
+    matchmaker.cancel("Efrat")  # and the one record left is the one that gets removed
+    assert store.first_in_range(QUEUE, 1200, 1200) is None
+    assert first_member != Waiter("Efrat", 1200, now[0]).member  # it really was a new one
+
+
+def test_a_player_who_came_back_is_matched_at_her_new_arrival_time():
+    matchmaker, _, now = a_matchmaker()
+    matchmaker.seek("Efrat", 1200)
+    now[0] += MATCH_TIMEOUT_MS
+    matchmaker.seek("Efrat", 1200)
+
+    assert matchmaker.seek("Dan", 1200) == Match(white="Efrat", black="Dan")
