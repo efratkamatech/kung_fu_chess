@@ -54,25 +54,30 @@ python main.py < path/to/fixture.in
 python graphics_main.py --white Alice --black Bob
 ```
 
-**Networked multiplayer** — start the headless server, then one client per player.
-The client asks for a username and password in the shell, then opens the window once
-you are matched. Needs the `server` and `graphics` extras:
-
-```bash
-python server_main.py                          # listens on ws://localhost:8765
-python client_main.py --url ws://localhost:8765
-```
-
-**In containers** — the same server, with PostgreSQL instead of the SQLite file. Needs
-Docker; the clients still run on the host:
+**Networked multiplayer** — the server is two processes now: a **gateway** holding the
+WebSocket connections, and a **shard** running the games, with NATS between them. Bring
+the whole thing up with Docker, then one client per player on the host:
 
 ```bash
 docker compose up --build
 ```
 
-Accounts and ratings live in a named volume, so they survive `docker compose down`. The
-server picks its database from `DATABASE_URL`: set, it speaks PostgreSQL; unset — every
-local run above — it keeps the SQLite file. Nothing else differs between the two.
+```bash
+python client_main.py --url ws://localhost:8765
+```
+
+The client asks for a username and password in the shell, then opens the window once you
+are matched. It needs the `graphics` extra; the server side needs only `server`, and
+nothing about the client changed — it still talks to one WebSocket and cannot tell that
+there are now four containers behind it.
+
+Compose runs four services: `gateway` (the only one with a published port), `shard`,
+`nats`, and `postgres`. Accounts and ratings live in a named volume, so they survive
+`docker compose down`. The shard picks its database from `DATABASE_URL`: set, it speaks
+PostgreSQL; unset, it keeps a local SQLite file.
+
+To run the two by hand instead, you still need a NATS server (`NATS_URL`, default
+`nats://localhost:4222`), then `python server_main.py` and `python gateway_main.py`.
 
 ### Controls (windowed game & client)
 
@@ -84,10 +89,12 @@ local run above — it keeps the SQLite file. Nothing else differs between the t
 ## Layout
 
 ```
-main.py  graphics_main.py  server_main.py  client_main.py   # the four entry points
+main.py  graphics_main.py  client_main.py                     # text, windowed, client
+server_main.py  gateway_main.py                              # the shard and a gateway
 src/kfchess/   # source, organized by layer (model, movement, rules, engine,
-               # server, client, graphics, text_io, and shared/ — the wire
-               # vocabulary the server and client both speak)
+               # server, gateway, client, graphics, text_io, bus/ — the event
+               # and message buses, and shared/ — the wire vocabulary the
+               # server and client both speak)
 tests/         # unit tests (mirror src) + text-fixture integration tests
 docs/          # architecture.md and walkthroughs
 migrations/    # the PostgreSQL schema, applied on the database's first boot
@@ -96,7 +103,8 @@ Dockerfile  docker-compose.yml                              # the containerised 
 
 ## Tech
 
-Python (standard library only at the core), `websockets` for the server, `opencv-python`
+Python (standard library only at the core), `websockets` for the gateway, `nats-py`
+between the services, `opencv-python`
 for rendering and input, and `sqlite3` (stdlib) — or PostgreSQL via `psycopg`, under
 Docker — for accounts and ratings. Sound in the windowed game uses `winsound` and is
 Windows-only; the game runs without it elsewhere.

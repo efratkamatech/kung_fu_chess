@@ -5,8 +5,6 @@ ratings are always within the matchmaking window, so "log in and press Play on b
 is the standard way to get a running game.
 """
 
-import asyncio
-
 from kfchess.config import (
     MS_PER_CELL,
     SOUND_CAPTURE,
@@ -38,7 +36,6 @@ from kfchess.shared.protocol import (
     decode,
     encode,
 )
-from kfchess.server.game_server import serve
 from kfchess.server.lobby import Lobby
 from kfchess.server.room_manager import RoomManager
 from kfchess.server.user_store import UserStore
@@ -570,8 +567,6 @@ def test_discarding_a_room_game_also_forgets_its_room():
 
 # --- the async entry point is importable --------------------------------------
 
-def test_serve_is_an_async_entry_point():
-    assert asyncio.iscoroutinefunction(serve)
 
 
 # --- scheduling: when does the lobby next need a tick? -------------------------
@@ -635,3 +630,65 @@ def test_a_refused_room_leaves_the_player_free_to_do_something_else():
 
     assert of_type(refused, Seated)[-1] == Seated(Color.WHITE)  # matched normally
     assert of_type(other, Seated)[-1] == Seated(Color.BLACK)
+
+
+# --- addressing a room instead of each of its members --------------------------
+
+def test_a_rooms_traffic_is_published_once_however_many_are_watching():
+    """Running as a shard: two players and two spectators cost one message, not four."""
+    published = []
+    hub = Lobby(_rook_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"),
+                to_room=lambda subject, text: published.append((subject, text)))
+    creator, cid = login_ready(hub, "Efrat")
+    hub.receive(cid, encode(CreateRoom()))
+    for name in ("Dan", "Sam", "Noa"):     # black, then two watchers
+        _, joiner_id = login_ready(hub, name)
+        hub.receive(joiner_id, encode(JoinRoom("AAAAAA")))
+    published.clear()
+
+    hub.receive(cid, encode(Move("WRa1a3")))
+
+    # One delta, published once -- the fan-out to the four of them is the gateways' job.
+    assert [subject for subject, _ in published] == ["room.0.delta", "room.0.delta"]
+    assert isinstance(decode(published[-1][1]), MoveStarted)
+
+
+def test_a_seat_is_still_answered_to_the_one_client_who_asked():
+    """Per-client replies do not go to the room: only that player is told her colour."""
+    published = []
+    hub = Lobby(_rook_board, UserStore(":memory:"),
+                to_room=lambda subject, text: published.append((subject, text)))
+    creator, cid = login_ready(hub, "Efrat")
+    hub.receive(cid, encode(CreateRoom()))
+
+    assert of_type(creator, Seated) != []                      # she was told
+    assert all("seated" not in text for _, text in published)  # the room was not
+
+
+def test_logging_in_again_reclaims_a_seat_whose_gateway_died():
+    """A killed gateway cannot report its sockets closed, so nobody is mid-countdown.
+
+    The seat is still there with the player's name on it, and logging in again -- which
+    means passing the password check again -- is what takes it back.
+    """
+    hub, white, black, wid, bid = seat_two()
+    hub.receive(wid, encode(Move("WRa1a3")))  # a game genuinely in progress
+
+    returner = FakeClient()
+    hub.receive(hub.connect(returner.send), encode(Login("Efrat", "pw")))
+
+    assert of_type(returner, Welcome)[-1].color is Color.WHITE  # back in her seat
+    assert of_type(returner, State) != []                       # and shown the board
+
+
+def test_the_displaced_connection_no_longer_holds_the_seat():
+    """One seat, one owner: the socket that was superseded is detached from the game."""
+    hub, white, black, wid, bid = seat_two()
+    returner = FakeClient()
+    hub.receive(hub.connect(returner.send), encode(Login("Efrat", "pw")))
+    before = len(white.received)
+
+    hub.receive(wid, encode(Move("WRa1a3")))  # the old connection tries to play on
+
+    assert white.received[-1] == Rejected(RejectReason.NOT_A_PLAYER)
+    assert len(white.received) == before + 1  # and it hears nothing of the game

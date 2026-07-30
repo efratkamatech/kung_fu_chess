@@ -1,0 +1,168 @@
+"""MessageBus: publish/subscribe *between processes*, with a fake for the tests.
+
+:class:`~kfchess.bus.event_bus.EventBus` carries typed events between objects inside one
+process. This carries text between *services* — the gateway that holds the sockets and
+the shard that runs the games — over NATS. They share a name and a shape and nothing
+else: an event is a Python object delivered to a function in the same interpreter, and a
+message is a string delivered over a network to a process that may be on another machine.
+
+Two implementations, and which one is in play is the difference between a test and a
+deployment:
+
+- :class:`FakeMessageBus` delivers synchronously, in the calling thread, in the order
+  things were published. That is what lets a test wire a whole gateway to a whole shard,
+  play a move, and assert on what came back — with no sockets, no event loop, and no
+  waiting. It is the same trick the ``Lobby`` tests already use with fake ``send``
+  callbacks, one layer further out.
+- :class:`NatsMessageBus` is the real one: a thin skin over ``nats-py``, kept thin enough
+  that "this is only I/O" is an honest claim rather than an excuse.
+
+Subject matching follows NATS: ``*`` matches exactly one token and ``>`` matches the rest
+of the subject, both only on whole dot-separated tokens. Both implementations use the
+same :func:`matches`, so a subscription that works against the fake works against NATS.
+"""
+
+from __future__ import annotations
+
+from typing import Callable, Dict, List, Tuple
+
+# A subscriber is handed the concrete subject a message arrived on as well as the
+# payload: a wildcard subscription such as ``conn.gw1.>`` is answered by many subjects,
+# and which one it was is usually the routing information the handler needs.
+Handler = Callable[[str, str], None]
+
+_MATCH_ONE = "*"
+_MATCH_REST = ">"
+
+
+def matches(pattern: str, subject: str) -> bool:
+    """Whether ``subject`` is delivered to a subscription on ``pattern``.
+
+    ``*`` stands for exactly one token, ``>`` for one or more tokens and only at the end.
+    A pattern with no wildcards matches only itself.
+    """
+    pattern_tokens = pattern.split(".")
+    subject_tokens = subject.split(".")
+    for index, token in enumerate(pattern_tokens):
+        if token == _MATCH_REST:
+            return index < len(subject_tokens)  # ">" needs something left to match
+        if index >= len(subject_tokens):
+            return False
+        if token != _MATCH_ONE and token != subject_tokens[index]:
+            return False
+    return len(pattern_tokens) == len(subject_tokens)
+
+
+class FakeMessageBus:
+    """An in-memory message bus: same interface, delivered inline, no network.
+
+    Handlers run during :meth:`publish`, in subscription order, so a chain of services
+    wired through one of these behaves like a single synchronous call — which is what
+    makes a test of the whole path deterministic and instant.
+    """
+
+    def __init__(self) -> None:
+        self._subscriptions: List[Tuple[str, Handler]] = []
+        # Everything ever published, in order, for a test that wants to assert on the
+        # wire itself rather than on what some handler did with it.
+        self.published: List[Tuple[str, str]] = []
+
+    def publish(self, subject: str, payload: str) -> None:
+        """Deliver ``payload`` to every subscription whose pattern matches ``subject``."""
+        self.published.append((subject, payload))
+        for pattern, handler in list(self._subscriptions):
+            if matches(pattern, subject):
+                handler(subject, payload)
+
+    def subscribe(self, pattern: str, handler: Handler) -> None:
+        """Call ``handler(subject, payload)`` for every message matching ``pattern``."""
+        self._subscriptions.append((pattern, handler))
+
+    def unsubscribe(self, pattern: str) -> None:
+        """Drop every subscription on ``pattern``; unknown patterns are ignored.
+
+        A gateway calls this when the last connection it held in a room goes away: with
+        nobody left to forward that room's traffic to, continuing to receive it would be
+        pure waste — and at ten thousand rooms per shard, waste that adds up.
+        """
+        self._subscriptions = [
+            (subscribed, handler)
+            for subscribed, handler in self._subscriptions
+            if subscribed != pattern
+        ]
+
+    def sent_to(self, pattern: str) -> List[str]:
+        """Every payload published to a subject matching ``pattern`` (a test helper)."""
+        return [
+            payload for subject, payload in self.published if matches(pattern, subject)
+        ]
+
+
+class NatsMessageBus:  # pragma: no cover  (a live NATS server; the fake stands in)
+    """The real bus: publish and subscribe over NATS, and nothing else.
+
+    **The interface stays synchronous**, which is the whole point. ``nats-py`` is
+    coroutine-based, and if that leaked out then the gateway and the shard would have to
+    be written in ``async def`` and could no longer be driven by a test that just calls
+    them — the thin-async-shell split this repository's coverage depends on would be
+    gone. So every call here only *records* what to do, and one coroutine, :meth:`run`,
+    performs them in the order they were asked for. It is the same shape as the
+    per-connection queue in ``gateway.app.serve``, one layer further out.
+
+    Deliberately the thinnest possible skin: everything that decides *what* to publish
+    and *what to do* with a message lives in the gateway and the shard, and both of those
+    are tested against :class:`FakeMessageBus`.
+    """
+
+    def __init__(self, connection, pending) -> None:
+        """Wrap a connected ``nats-py`` client and an ``asyncio.Queue`` (see
+        :func:`connect`); the queue is taken as an argument so that nothing here has to
+        import asyncio to be constructed."""
+        self._connection = connection
+        self._pending = pending
+        self._handlers: Dict[str, Handler] = {}
+        self._subscriptions: Dict[str, list] = {}
+
+    def publish(self, subject: str, payload: str) -> None:
+        self._pending.put_nowait(("publish", subject, payload))
+
+    def subscribe(self, pattern: str, handler: Handler) -> None:
+        self._handlers[pattern] = handler
+        self._pending.put_nowait(("subscribe", pattern, ""))
+
+    def unsubscribe(self, pattern: str) -> None:
+        self._pending.put_nowait(("unsubscribe", pattern, ""))
+
+    async def run(self) -> None:
+        """Perform the queued operations, forever and in order."""
+        while True:
+            operation, subject, payload = await self._pending.get()
+            if operation == "publish":
+                await self._connection.publish(subject, payload.encode("utf-8"))
+            elif operation == "subscribe":
+                await self._open(subject)
+            else:
+                for subscription in self._subscriptions.pop(subject, []):
+                    await subscription.unsubscribe()
+
+    async def _open(self, pattern: str) -> None:
+        handler = self._handlers[pattern]
+
+        async def deliver(message) -> None:
+            handler(message.subject, message.data.decode("utf-8"))
+
+        subscription = await self._connection.subscribe(pattern, cb=deliver)
+        self._subscriptions.setdefault(pattern, []).append(subscription)
+
+
+async def connect(url: str) -> NatsMessageBus:  # pragma: no cover  (opens a socket)
+    """Connect to the NATS server at ``url`` and wrap it as a bus.
+
+    ``nats`` is imported here rather than at module scope so that everything else —
+    including every test — imports and runs without the client library installed.
+    """
+    import asyncio
+
+    import nats
+
+    return NatsMessageBus(await nats.connect(url), asyncio.Queue())

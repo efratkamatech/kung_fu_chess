@@ -34,13 +34,44 @@ services:
       # `postgres:5432` inside the compose network -- so a deployment drops it.
       - "5432:5432"
 
-  server:
+  nats:
+    image: nats:2-alpine
+    # No volume: everything on this bus is in flight. A delta nobody was listening for
+    # is not worth keeping, and the ten-second resync is what repairs a client that
+    # missed one. (The one message that must not be lost, `game.finished`, is S2's
+    # JetStream item and is not published yet.)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    command: ["--http_port", "8222"]  # the monitoring port the healthcheck asks
+
+  shard:
     build: .
+    command: ["python", "server_main.py"]
     depends_on:
       postgres:
         condition: service_healthy
+      nats:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://kfchess:kfchess@postgres:5432/kfchess
+      NATS_URL: nats://nats:4222
+      KFC_SHARD_ID: sh1
+    # No ports. Nothing outside this network can reach the shard, and nothing needs to:
+    # players talk to a gateway, and the gateway talks to the bus. That is the split.
+    restart: unless-stopped
+
+  gateway:
+    build: .
+    command: ["python", "gateway_main.py"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: nats://nats:4222
+      KFC_GATEWAY_ID: gw1
       # Bind every interface: "localhost" inside a container means only the container.
       KFC_SERVER_HOST: 0.0.0.0
     ports:

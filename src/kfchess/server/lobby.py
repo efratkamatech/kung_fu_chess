@@ -13,7 +13,8 @@ Every inbound message is dispatched by the client's state, and every broadcast i
 games running at once never see each other. Timeouts (a lone matchmaking search) ride
 the same ``tick(dt_ms)`` that advances the games, so there is no real clock here and
 every branch is unit-tested with fake ``send`` callbacks — no sockets at all. The async
-:func:`kfchess.server.game_server.serve` is the only part that touches real WebSockets.
+:class:`kfchess.server.shard.Shard` is the only part that touches the bus, and the
+gateway on its far side is the only part that touches a socket.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
+from kfchess.bus import subjects
 from kfchess.config import SNAPSHOT_RESYNC_MS
 from kfchess.model.board import Board
 from kfchess.model.color import Color
@@ -47,6 +49,7 @@ from kfchess.server.user_store import UserStore
 
 Send = Callable[[str], None]      # how the lobby pushes one wire string to one client
 NewBoard = Callable[[], Board]    # makes a fresh starting board for each new game
+ToRoom = Callable[[str, str], None]  # how it addresses a whole room: (subject, text)
 
 _log = logging.getLogger(__name__)  # activity trail; silent until configure_logging runs
 
@@ -83,9 +86,16 @@ class Lobby:
         new_board: NewBoard,
         users: UserStore,
         rooms: Optional[RoomManager] = None,
+        to_room: Optional[ToRoom] = None,
     ) -> None:
         self._new_board = new_board
         self._users = users
+        # Where a whole room's traffic goes. Two sinks, because they are two different
+        # destinations: `send` on a _Client answers one person, and this one addresses a
+        # *place* — everyone in a game, players and spectators, without naming any of
+        # them. Injected, so the same hub runs as one process (the default below) or as
+        # a shard publishing to a subject.
+        self._to_room = to_room if to_room is not None else self._send_to_members
         self._matchmaker = Matchmaker()
         # Injected so a test can hand over an id generator with a known (or exhausted)
         # sequence, rather than reach into the default one.
@@ -190,28 +200,63 @@ class Lobby:
         self._send(client_id, Welcome(client.color, rating))
 
     def _reconnect_seat(self, username: str) -> Optional[Tuple[int, Color]]:
-        """Find a game where ``username`` dropped and is still mid-countdown, if any.
+        """Find a seat ``username`` holds in some game, if any.
 
-        A game only survives a player leaving while the opponent is still watching, so at
-        most one seat is ever missing per game — the colour running the resign countdown.
+        **Any** seat of theirs, not only one whose player is mid-countdown. That
+        distinction used to be the test, and it stranded every game on a gateway that
+        died: a gateway cannot publish its own death, so nobody is ever marked as having
+        dropped, and the returning player found no seat waiting even though hers was
+        sitting there with her name on it.
+
+        Owning the seat is the truer question, and it is asked of exactly the same
+        evidence as before — the password check that has already succeeded above. So this
+        widens what can be reclaimed without widening who may reclaim it. (S3's
+        ``seat_token`` hardens both, by proving identity against something better than a
+        username.)
+
+        Games that have *ended* are skipped. There is nothing to return to, and being put
+        back in one would be worse than useless: a client with a seat is a client the
+        lobby will not matchmake, so the player would be stranded in a finished game with
+        no way to start another.
         """
         for game_id, game in self._games.items():
-            color = game.session.disconnected_color()
-            if color is not None and game.session.name_of(color) == username:
-                return game_id, color
+            if game.session.is_over():
+                continue
+            for color in Color:
+                if game.session.name_of(color) == username:
+                    return game_id, color
         return None
 
     def _reconnect(self, client_id: int, target: Tuple[int, Color]) -> None:
-        """Put a returning player back in their seat and cancel the resign countdown."""
+        """Put a returning player back in their seat and cancel any resign countdown."""
         game_id, color = target
         client = self._clients[client_id]
+        self._evict_previous_holder(client_id, game_id, color)
         client.color = color
         self._join(client_id, game_id)
         self._games[game_id].session.reconnect()
         _log.info("client %d reconnected to game %d as %s", client_id, game_id, color.value)
         self._send(client_id, Welcome(color, client.rating))  # colour set => skip the lobby
+        # The board, addressed to the returner, for the same reason a newcomer gets one
+        # (see _seat): the room's copy waits on a subscription this message is asking for.
+        self._send(client_id, State(self._games[game_id].session.snapshot()))
         self._broadcast(game_id)      # the "countdown cancelled" delta, to everyone
-        self._broadcast_state(game_id)  # and the whole board, for the returner
+        self._broadcast_state(game_id)  # and the whole board, for everyone else
+
+    def _evict_previous_holder(self, client_id: int, game_id: int, color: Color) -> None:
+        """Detach whoever was holding this seat before, so no two clients share it.
+
+        Usually nobody: the player dropped and that is why she is back. But after a
+        gateway dies, the connection it held is still on the books here — nothing told
+        this side it was gone — and leaving it seated would give one seat two owners.
+        """
+        for other_id in list(self._members_by_game[game_id]):
+            other = self._clients[other_id]
+            if other_id != client_id and other.color is color:
+                other.session_id = None
+                other.color = None
+                self._members_by_game[game_id].discard(other_id)
+                _log.info("client %d displaced from game %d", other_id, game_id)
 
     def _on_play(self, client_id: int) -> None:
         """Handle a "Play" request: try to matchmake this client, else queue it.
@@ -310,6 +355,23 @@ class Lobby:
         role = "spectator" if color is None else color.value
         _log.info("client %d seated in game %d as %s", client_id, game_id, role)
         self._send(client_id, Seated(color, room_id))
+        # The board, straight to the newcomer, and not only to the room a moment later.
+        # Running as a shard those are different journeys: the room's copy only arrives
+        # once this client's gateway has finished subscribing to that room, and the
+        # request to subscribe was the message just above. Addressed to the connection,
+        # it cannot lose that race — which matters most for the person it is most likely
+        # to affect, a spectator dropping into a game already in progress.
+        self._send(client_id, State(game.session.snapshot()))
+
+    def game_of(self, client_id: int) -> Optional[int]:
+        """Which game a client is in, or ``None`` for one still in the lobby or gone.
+
+        The shard reads this to know when a connection has just been given a place, so it
+        can tell that connection's gateway which room to follow. Membership is set in
+        exactly one method (:meth:`_join`), so this cannot disagree with it.
+        """
+        client = self._clients.get(client_id)
+        return client.session_id if client is not None else None
 
     def _on_move(self, client_id: int, cmd: str) -> None:
         """Apply a move to the sender's game, or refuse it, telling only that game."""
@@ -352,7 +414,7 @@ class Lobby:
 
         Only the games' *scheduled* work is in here. The resync clock and the matchmaking
         timeouts count elapsed time rather than name a moment, so they ride the caller's
-        own interval instead — see :func:`kfchess.server.game_server.next_sleep_s`, which
+        own interval instead — see :func:`kfchess.server.shard.next_sleep_s`, which
         is the one place the two are combined.
         """
         delays = [
@@ -405,21 +467,30 @@ class Lobby:
         nothing to say now says nothing, where it used to send every client a fresh copy
         of the whole board.
         """
-        members = self._members(game_id)
         for message in self._games[game_id].session.drain_deltas():
-            text = encode(message)
-            for client in members:
-                client.send(text)
+            self._to_room(subjects.room_delta(str(game_id)), encode(message))
 
     def _broadcast_state(self, game_id: int) -> None:
-        """Send the game's full snapshot to each of its members.
+        """Send the game's full snapshot to the room.
 
         Reserved for the moments a whole picture is genuinely needed: someone was just
         seated (and everyone's view of who is playing changed), someone reconnected, or
         the periodic resync came due.
         """
-        text = encode(State(self._games[game_id].session.snapshot()))
-        for client in self._members(game_id):
+        self._to_room(
+            subjects.room_state(str(game_id)),
+            encode(State(self._games[game_id].session.snapshot())),
+        )
+
+    def _send_to_members(self, subject: str, text: str) -> None:
+        """The default room sink: hand the text to each member, in this process.
+
+        What a single-process run does, and what every test of this class does. Running
+        as a shard, the injected sink publishes once to ``subject`` instead and the
+        fan-out happens at the gateways — which is the difference between a room's
+        spectators costing the shard one message and costing it one message each.
+        """
+        for client in self._members(int(subjects.room_of(subject))):
             client.send(text)
 
     def _resync_if_due(self, game_id: int, dt_ms: int) -> None:

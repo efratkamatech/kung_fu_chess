@@ -387,10 +387,29 @@ to shard subjects, run the tick loop. No `websockets` import at all.
 
 ### Exit criteria
 
-- [ ] Gateway and shard run as two separate containers in compose
-- [ ] A full game plays end to end across them
-- [ ] Killing and restarting the gateway lets clients reconnect; **the game survives**
-- [ ] No test opens a real socket; the NATS fake covers the bus
+- [x] Gateway and shard run as two separate containers in compose — four services now:
+      `gateway` (the only published port), `shard`, `nats`, `postgres`
+- [x] A full game plays end to end across them — verified over the real stack, including
+      a private room with a **spectator**: she is seated without a colour, sees every
+      move the players see, and her own move comes back refused
+- [x] Killing and restarting the gateway lets clients reconnect; **the game survives** —
+      this one failed first and found a real bug; see the note below
+- [x] No test opens a real socket; the NATS fake covers the bus — and a whole gateway is
+      wired to a whole shard through it in `test_gateway_shard_e2e.py`
+
+**What the third criterion found.** A killed gateway cannot publish its own death, so
+nobody is ever marked as having dropped — and `_reconnect_seat` only ever matched a seat
+whose player was *mid-countdown*. Every game on a dead gateway was therefore stranded:
+the seat sat there with the player's name on it and she was sent back to the lobby.
+Reclaiming now asks the truer question — does this username hold a seat in a game still
+in progress — on exactly the same evidence as before, the password check that has already
+passed. Finished games are skipped, or a returning player would be stuck in one: a client
+with a seat is a client the lobby will not matchmake.
+
+**Not built, and deliberately: `game.finished` on JetStream** (risk #5). The subject is in
+the layout above, but nothing publishes it yet — results are still written in-process by
+`Lobby._maybe_record_result`. It becomes a real message when the consumer that persists it
+becomes a real service, which is S3.
 
 ### Risks
 
@@ -625,7 +644,12 @@ event-driven tick with elapsed-time advancement, and the `RoomManager` hang. Mea
 ×98.8 traffic cut.
 
 **Complete: S1.** `docker compose up` brings up PostgreSQL and the server; accounts and
-ELO live in the database and survive a restart. 556 tests, 100% coverage, ruff clean.
+ELO live in the database and survive a restart.
+
+**Complete: S2.** The first real split: a gateway holding the sockets, a shard running the
+games, NATS between them. The gateway cannot import the game and a test enforces it; a
+room's traffic is published once however many people are in it; and a gateway can die and
+be replaced without taking its games with it. 632 tests, 100% coverage, ruff clean.
 
 **Open from both, and only these:** nobody has watched the **windowed** client against
 either build — S0 changed what is drawn between messages, and S1 changed where accounts
@@ -636,4 +660,4 @@ live, and both were verified with headless clients over real sockets instead. Pl
 (`config.SERVER_LOG`), so `docker compose logs server` shows nothing. S5 already owns the
 logging change; a stream handler alongside the file one is the fix.
 
-**Next:** S2.
+**Next:** S3.

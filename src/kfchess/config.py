@@ -152,6 +152,18 @@ SNAPSHOT_RESYNC_MS = 10_000
 WS_PING_INTERVAL_S = 10
 WS_PING_TIMEOUT_S = 10
 
+# --- The message bus between the gateway and the shard (S2) ------------------
+# Where NATS is listening. Set from the environment because it is a property of the
+# deployment, like DATABASE_URL below; docker-compose.yml points both services at the
+# `nats` service, and a bare `localhost` is the right default for running them by hand.
+NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
+# Who this process is. A gateway's id prefixes every connection id it hands out, so the
+# replies to its sockets are addressed to a subject only it is subscribed to; a shard's
+# id names the subjects only it serves. They must be unique per replica, which is what
+# the orchestrator is for -- these defaults are for a single machine.
+GATEWAY_ID = os.environ.get("KFC_GATEWAY_ID", "gw1")
+SHARD_ID = os.environ.get("KFC_SHARD_ID", "sh1")
+
 # --- Accounts and rating (server-side) ---------------------------------------
 # Where the users database lives (username, password hash, rating). Resolved at the
 # repo root so it survives across server runs. (git-ignored; not game art.)

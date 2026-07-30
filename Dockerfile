@@ -49,7 +49,7 @@ COPY --from=build /app /app
 # piece sprite -- belong to the graphics front-ends, which this image deliberately
 # cannot run; config resolves them lazily, so their absence is never noticed.
 COPY assets/board.csv ./assets/board.csv
-COPY server_main.py ./
+COPY server_main.py gateway_main.py ./
 
 RUN chown -R kfchess:kfchess /app
 USER kfchess
@@ -58,4 +58,7 @@ USER kfchess
 # outside the container -- docker-compose.yml sets KFC_SERVER_HOST to do that.
 EXPOSE 8765
 
+# Which process this image runs is chosen by compose: the shard
+# (server_main.py) or a gateway (gateway_main.py). One image, two roles --
+# they share every line of code that is not the entry point.
 CMD ["python", "server_main.py"]

@@ -105,7 +105,7 @@ class UserStore:
         """Open ``target``: a SQLite path, a PostgreSQL DSN, or the configured default.
 
         The default is ``DATABASE_URL`` when the environment sets one and the SQLite file
-        otherwise — so :func:`kfchess.server.game_server.serve` writes ``UserStore()``
+        otherwise — so :func:`kfchess.server.shard.serve` writes ``UserStore()``
         once and is right in a container and on a laptop alike.
         """
         target = target if target is not None else (DATABASE_URL or USERS_DB)
