@@ -1,25 +1,30 @@
-"""MessageBus: publish/subscribe *between processes*, with a fake for the tests.
+"""MessageBus: publish/subscribe between the gateway and the shard, near or far.
 
 :class:`~kfchess.bus.event_bus.EventBus` carries typed events between objects inside one
 process. This carries text between *services* — the gateway that holds the sockets and
-the shard that runs the games — over NATS. They share a name and a shape and nothing
-else: an event is a Python object delivered to a function in the same interpreter, and a
-message is a string delivered over a network to a process that may be on another machine.
+the shard that runs the games. They share a name and a shape and nothing else: an event
+is a Python object delivered to a function in the same interpreter, and a message is a
+string that may have to cross a network to a process on another machine.
 
-Two implementations, and which one is in play is the difference between a test and a
-deployment:
+Two implementations. **Which one is in play is a deployment decision, not a test
+decision** — that is the point of there being two:
 
-- :class:`FakeMessageBus` delivers synchronously, in the calling thread, in the order
-  things were published. That is what lets a test wire a whole gateway to a whole shard,
-  play a move, and assert on what came back — with no sockets, no event loop, and no
-  waiting. It is the same trick the ``Lobby`` tests already use with fake ``send``
+- :class:`InProcessMessageBus` delivers synchronously, in the calling thread, in the
+  order things were published. It runs the solo server, where one process holds both
+  ends and a message is a function call; and it runs the tests, which wire a whole
+  gateway to a whole shard, play a move, and assert on what came back — no sockets, no
+  event loop, no waiting. The same trick the ``Lobby`` tests use with their ``send``
   callbacks, one layer further out.
-- :class:`NatsMessageBus` is the real one: a thin skin over ``nats-py``, kept thin enough
-  that "this is only I/O" is an honest claim rather than an excuse.
+- :class:`NatsMessageBus` is the one for the split deployment: a thin skin over
+  ``nats-py``, kept thin enough that "this is only I/O" is an honest claim rather than
+  an excuse.
+
+Neither is the "real" one. A game played over the first is played by the same shard,
+under the same rules, as a game played over the second.
 
 Subject matching follows NATS: ``*`` matches exactly one token and ``>`` matches the rest
 of the subject, both only on whole dot-separated tokens. Both implementations use the
-same :func:`matches`, so a subscription that works against the fake works against NATS.
+same :func:`matches`, so a subscription that works in one process works over NATS.
 """
 
 from __future__ import annotations
@@ -53,12 +58,13 @@ def matches(pattern: str, subject: str) -> bool:
     return len(pattern_tokens) == len(subject_tokens)
 
 
-class FakeMessageBus:
-    """An in-memory message bus: same interface, delivered inline, no network.
+class InProcessMessageBus:
+    """A message bus for one process: same interface, delivered inline, no network.
 
     Handlers run during :meth:`publish`, in subscription order, so a chain of services
-    wired through one of these behaves like a single synchronous call — which is what
-    makes a test of the whole path deterministic and instant.
+    wired through one of these behaves like a single synchronous call — which makes a
+    test of the whole path deterministic and instant, and makes the solo server a
+    gateway and a shard talking to each other at the speed of a function call.
     """
 
     def __init__(self) -> None:
@@ -98,7 +104,7 @@ class FakeMessageBus:
         ]
 
 
-class NatsMessageBus:  # pragma: no cover  (a live NATS server; the fake stands in)
+class NatsMessageBus:  # pragma: no cover  (a live NATS server; the in-process one stands in)
     """The real bus: publish and subscribe over NATS, and nothing else.
 
     **The interface stays synchronous**, which is the whole point. ``nats-py`` is
@@ -111,7 +117,7 @@ class NatsMessageBus:  # pragma: no cover  (a live NATS server; the fake stands 
 
     Deliberately the thinnest possible skin: everything that decides *what* to publish
     and *what to do* with a message lives in the gateway and the shard, and both of those
-    are tested against :class:`FakeMessageBus`.
+    are tested against :class:`InProcessMessageBus`.
     """
 
     def __init__(self, connection, pending) -> None:

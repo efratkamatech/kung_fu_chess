@@ -18,7 +18,7 @@ Two translations happen here and nowhere else:
   understand the game at all.
 
 Everything below :meth:`Shard.tick` is synchronous and driven by calling it, so a test
-wires a gateway to a shard through :class:`~kfchess.bus.message_bus.FakeMessageBus` and
+wires a gateway to a shard through :class:`~kfchess.bus.message_bus.InProcessMessageBus` and
 plays a whole game in one thread. :func:`serve` is the irreducible async shell.
 """
 

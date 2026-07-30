@@ -1,6 +1,6 @@
 """Tests for the Gateway: text in from a socket, text out to a subject, and back.
 
-Everything runs on FakeMessageBus, so a whole gateway is driven by calling methods and
+Everything runs on InProcessMessageBus, so a whole gateway is driven by calling methods and
 read by looking at what reached the bus. No sockets, no event loop.
 """
 
@@ -12,12 +12,12 @@ from kfchess.bus.envelope import (
     decode_client_event,
     encode,
 )
-from kfchess.bus.message_bus import FakeMessageBus
+from kfchess.bus.message_bus import InProcessMessageBus
 from kfchess.gateway.app import Gateway
 
 
 def a_gateway(gateway_id="gw1"):
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     return Gateway(bus, gateway_id), bus
 
 

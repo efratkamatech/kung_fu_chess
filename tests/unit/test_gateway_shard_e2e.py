@@ -2,7 +2,7 @@
 
 This is the test S2 exists to make pass. Two processes' worth of code — sockets on one
 side, games on the other, nothing shared but subjects — driven end to end in one thread,
-because :class:`FakeMessageBus` delivers inline. Neither side is stubbed: the real
+because :class:`InProcessMessageBus` delivers inline. Neither side is stubbed: the real
 :class:`Gateway` talks to the real :class:`Shard`, which drives the real ``Lobby``.
 
 The spectator is not a footnote here. A room with a watcher in it is the case where every
@@ -12,7 +12,7 @@ what the players see, and the shard must still refuse a move from someone who ha
 """
 
 from kfchess.bus import subjects
-from kfchess.bus.message_bus import FakeMessageBus
+from kfchess.bus.message_bus import InProcessMessageBus
 from kfchess.gateway.app import Gateway
 from kfchess.model.board import Board
 from kfchess.model.color import Color
@@ -69,7 +69,7 @@ class Client:
 
 def a_world(gateway_id="gw1"):
     """One bus, one gateway, one shard — the whole deployment, in one thread."""
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     gateway = Gateway(bus, gateway_id)
     shard = Shard(bus, a_board, UserStore(":memory:"))
     return bus, gateway, shard
@@ -124,7 +124,7 @@ def test_a_move_from_a_client_with_no_seat_is_refused_across_the_split():
 
 def open_room_with_a_spectator():
     """A private room: white, black, and one watcher, all through the gateway."""
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     gateway = Gateway(bus, "gw1")
     # A known room id, so the joiners have something to type.
     shard = Shard(bus, a_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
@@ -199,7 +199,7 @@ def test_a_player_leaving_starts_a_countdown_the_spectator_also_sees():
 # --- two gateways ---------------------------------------------------------------
 
 def test_a_second_gateway_serves_the_same_room_without_knowing_the_first():
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     here, there = Gateway(bus, "gw1"), Gateway(bus, "gw2")
     shard = Shard(bus, a_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
 

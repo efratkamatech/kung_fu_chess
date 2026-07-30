@@ -7,7 +7,7 @@ tested with a fake hub instead of a running event loop.
 
 from kfchess.bus import subjects
 from kfchess.bus.envelope import ClientEvent, ClientEventKind, encode
-from kfchess.bus.message_bus import FakeMessageBus
+from kfchess.bus.message_bus import InProcessMessageBus
 from kfchess.config import MS_PER_CELL
 from kfchess.model.board import Board
 from kfchess.model.color import Color
@@ -60,7 +60,7 @@ def a_shard():
             [Piece(reg.get("R"), Color.WHITE), None, None],
         ])
 
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     return bus, Shard(bus, board, UserStore(":memory:"))
 
 

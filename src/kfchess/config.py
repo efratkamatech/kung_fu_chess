@@ -187,6 +187,19 @@ MATCH_TIMEOUT_MS = 60_000
 # if they have not reconnected by the end, they auto-resign and the opponent wins.
 RESIGN_COUNTDOWN_MS = 20_000
 
+# --- Shared state across the shards (S3) -------------------------------------
+# Where Redis is listening. Environment-shaped like NATS_URL and DATABASE_URL: it is a
+# property of the deployment, and docker-compose.yml points every service at one.
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+# The reconnect token, in bytes of randomness. A username is a claim, not proof: anyone
+# who knows yours could otherwise take your seat by logging in as you the moment your
+# connection drops. The shard mints one of these per seat and checks it on return.
+SEAT_TOKEN_BYTES = 16
+# How long the player directory remembers where somebody is sitting. It only has to
+# outlive a game plus the reconnect window; anything stranded by a crashed shard then
+# clears itself rather than pointing at a game that no longer exists.
+PLAYER_TTL_S = 300
+
 # --- Rooms (M6) --------------------------------------------------------------
 # Crockford base32: the digits and uppercase letters with O, I, L and U removed, so an
 # id read aloud or typed off a screenshot cannot be mistaken (no 0/O, no 1/I/L). Six
@@ -198,6 +211,10 @@ ROOM_ID_LENGTH = 6
 # into a refusal the player sees, instead of a loop that spins for ever holding the
 # server's only thread.
 ROOM_ID_MAX_ATTEMPTS = 10
+# How long a claimed room id is held in the shared store. It outlives the longest game by
+# a wide margin and then frees itself, so an id stranded by a shard that crashed mid-game
+# comes back into circulation without anything having to notice the crash.
+ROOM_TTL_S = 300
 
 # --- Logging (M6) ------------------------------------------------------------
 # Where the server and client write their activity logs (git-ignored; not game art).

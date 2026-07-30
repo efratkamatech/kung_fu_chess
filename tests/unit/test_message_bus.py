@@ -8,7 +8,7 @@ deployment would make the whole suite lie.
 import pytest
 
 from kfchess.bus import subjects
-from kfchess.bus.message_bus import FakeMessageBus, matches
+from kfchess.bus.message_bus import InProcessMessageBus, matches
 
 
 # --- subject matching ---------------------------------------------------------
@@ -47,7 +47,7 @@ def test_these_subjects_are_not(pattern, subject):
 # --- the fake bus -------------------------------------------------------------
 
 def test_a_message_reaches_every_matching_subscriber_in_order():
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     seen = []
     bus.subscribe("room.4.>", lambda subject, payload: seen.append(("first", payload)))
     bus.subscribe("room.4.delta", lambda subject, payload: seen.append(("second", payload)))
@@ -59,7 +59,7 @@ def test_a_message_reaches_every_matching_subscriber_in_order():
 
 
 def test_a_subscriber_is_told_which_subject_it_was():
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     seen = []
     bus.subscribe(subjects.gateway_inbox("gw1"), lambda subject, _: seen.append(subject))
 
@@ -69,13 +69,13 @@ def test_a_subscriber_is_told_which_subject_it_was():
 
 
 def test_a_message_nobody_subscribed_to_is_simply_dropped():
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     bus.publish("lobby.cmd", "into the void")
     assert bus.sent_to("lobby.cmd") == ["into the void"]  # recorded, delivered to nobody
 
 
 def test_unsubscribing_stops_delivery():
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     seen = []
     bus.subscribe("room.4.>", lambda subject, payload: seen.append(payload))
     bus.publish(subjects.room_delta("4"), "before")
@@ -87,14 +87,14 @@ def test_unsubscribing_stops_delivery():
 
 
 def test_unsubscribing_from_something_never_subscribed_is_harmless():
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     bus.unsubscribe("room.99.>")  # e.g. the last member left a room twice over
     bus.publish("room.99.delta", "still fine")
     assert bus.sent_to("room.99.>") == ["still fine"]
 
 
 def test_the_bus_records_everything_for_a_test_to_read_back():
-    bus = FakeMessageBus()
+    bus = InProcessMessageBus()
     bus.publish(subjects.connection("gw1.1"), "to one client")
     bus.publish(subjects.room_delta("4"), "to a room")
 
