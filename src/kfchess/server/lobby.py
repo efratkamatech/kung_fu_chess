@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from hmac import compare_digest
 from typing import Callable, List, Optional, Tuple
 
 from kfchess.bus import subjects
@@ -36,6 +37,7 @@ from kfchess.shared.protocol import (
     Notice,
     Play,
     Rejected,
+    Resume,
     Seated,
     State,
     Welcome,
@@ -43,6 +45,7 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.server.session import GameSession
+from kfchess.services.directory import Seat
 from kfchess.services.rooms import RoomIdUnavailable
 from kfchess.services.shared import SharedState
 from kfchess.server.user_store import UserStore
@@ -103,6 +106,7 @@ class Lobby:
         self._matchmaker = shared.matchmaker
         self._rooms = shared.rooms
         self._directory = shared.directory
+        self._shard_id = shared.shard_id
         self._clients: dict[int, _Client] = {}
         # Who, of the players waiting in that shared queue, is one of mine. The queue
         # deals in usernames, because a client number means something only in the process
@@ -159,6 +163,15 @@ class Lobby:
         (its opponent is still watching) is not empty, so it survives until they leave too.
         """
         if not self._members_by_game[game_id]:
+            session = self._games[game_id].session
+            for color in Color:
+                name = session.name_of(color)
+                if name is not None:
+                    # Nobody is coming back to this: the last person in it has left. The
+                    # entry would expire on its own -- that is what covers a shard that
+                    # crashes -- but a player whose game just ended should not be sent
+                    # back into it on her next login.
+                    self._directory.leave(name)
             del self._games[game_id]
             del self._members_by_game[game_id]
             self._rooms.remove_game(game_id)
@@ -175,6 +188,8 @@ class Lobby:
             return  # not valid JSON, or an unknown message type
         if isinstance(message, Login):
             self._on_login(client_id, message.username, message.password)
+        elif isinstance(message, Resume):
+            self._on_resume(client_id, message.username, message.seat_token)
         elif isinstance(message, Play):
             self._on_play(client_id)
         elif isinstance(message, CreateRoom):
@@ -202,41 +217,62 @@ class Lobby:
         client.username = username
         client.rating = rating
         _log.info("client %d logged in as %r (rating %d)", client_id, username, rating)
-        target = self._reconnect_seat(username)
+        seat = self._directory.seat_of(username)
+        target = None if seat is None else self._seat_here(seat)
         if target is not None:
-            self._reconnect(client_id, target)
+            self._reconnect(client_id, target, seat.seat_token)
             return
         self._send(client_id, Welcome(client.color, rating))
 
-    def _reconnect_seat(self, username: str) -> Optional[Tuple[int, Color]]:
-        """Find a seat ``username`` holds in some game, if any.
+    def _on_resume(self, client_id: int, username: str, seat_token: str) -> None:
+        """Put a player back in a seat she can prove is hers, without a password.
 
-        **Any** seat of theirs, not only one whose player is mid-countdown. That
-        distinction used to be the test, and it stranded every game on a gateway that
-        died: a gateway cannot publish its own death, so nobody is ever marked as having
-        dropped, and the returning player found no seat waiting even though hers was
-        sitting there with her name on it.
+        The cheap way back. A password costs a hundred thousand hash rounds to check,
+        and a reconnect happens on a bad network — which is to say, often, and in bursts.
+        A token costs one lookup.
 
-        Owning the seat is the truer question, and it is asked of exactly the same
-        evidence as before — the password check that has already succeeded above. So this
-        widens what can be reclaimed without widening who may reclaim it. (S3's
-        ``seat_token`` hardens both, by proving identity against something better than a
-        username.)
-
-        Games that have *ended* are skipped. There is nothing to return to, and being put
-        back in one would be worse than useless: a client with a seat is a client the
-        lobby will not matchmake, so the player would be stranded in a finished game with
-        no way to start another.
+        **This shard is what checks it**, not the gateway that relayed the message and
+        not anything reading the directory on the client's behalf: this shard minted the
+        token when it seated her, and it owns the room the seat is in. A refusal is
+        deliberately one answer for every way it can fail — no such player, wrong token,
+        game finished, seat somewhere else. Telling an unknown caller *which* of those it
+        was would let them map the seats they do not hold.
         """
-        for game_id, game in self._games.items():
-            if game.session.is_over():
-                continue
-            for color in Color:
-                if game.session.name_of(color) == username:
-                    return game_id, color
-        return None
+        seat = self._directory.seat_of(username)
+        target = None if seat is None else self._seat_here(seat)
+        if seat is None or target is None or not compare_digest(seat.seat_token, seat_token):
+            _log.info("client %d could not resume %r's seat", client_id, username)
+            self._send(client_id, Rejected(RejectReason.BAD_SEAT))
+            return
+        client = self._clients[client_id]
+        client.username = username
+        client.rating = self._users.get_rating(username)
+        self._reconnect(client_id, target, seat.seat_token)
 
-    def _reconnect(self, client_id: int, target: Tuple[int, Color]) -> None:
+    def _seat_here(self, seat: Seat) -> Optional[Tuple[int, Color]]:
+        """The live local game a directory seat points at, or ``None``.
+
+        This replaced a walk over every game on the server asking each one whether the
+        returning player was in it — fine for the two games a laptop runs, hopeless at
+        the numbers this is sized for, and impossible once the seat is not even on the
+        machine doing the asking. The directory answers in one lookup, from anywhere.
+
+        ``None`` for three different situations, and they are all "not here": the seat is
+        on another shard, the game has since been discarded, or it has *ended*. That last
+        one matters — being put back into a finished game would be worse than useless,
+        since a client with a seat is one the lobby will not matchmake, so she would be
+        stranded in a game that is over with no way to start another.
+        """
+        if seat.shard_id != self._shard_id:
+            return None
+        game = self._games.get(int(seat.room_id))
+        if game is None or game.session.is_over():
+            return None
+        return int(seat.room_id), seat.color
+
+    def _reconnect(
+        self, client_id: int, target: Tuple[int, Color], seat_token: str
+    ) -> None:
         """Put a returning player back in their seat and cancel any resign countdown."""
         game_id, color = target
         client = self._clients[client_id]
@@ -245,7 +281,10 @@ class Lobby:
         self._join(client_id, game_id)
         self._games[game_id].session.reconnect()
         _log.info("client %d reconnected to game %d as %s", client_id, game_id, color.value)
-        self._send(client_id, Welcome(color, client.rating))  # colour set => skip the lobby
+        # Colour set => skip the lobby. The token rides along because she may not have
+        # one: a player who closed the window and started the client again has just
+        # proved herself with a password, and this is how she gets the cheaper proof back.
+        self._send(client_id, Welcome(color, client.rating, seat_token))
         # The board, addressed to the returner, for the same reason a newcomer gets one
         # (see _seat): the room's copy waits on a subscription this message is asking for.
         self._send(client_id, State(self._games[game_id].session.snapshot()))
@@ -372,12 +411,19 @@ class Lobby:
         color = game.session.assign_color()  # WHITE, then BLACK, then None (spectator)
         self._join(client_id, game_id)
         client.color = color
+        seat_token = ""
         if color is not None:
             game.session.set_name(color, client.username)
             game.session.set_rating(color, client.rating)
+            # Written down where any shard can find it, so coming back is a lookup rather
+            # than a search. A spectator gets no entry: she holds no seat, and nothing
+            # would be waiting for her if she left.
+            seat_token = self._directory.take_seat(
+                client.username, str(game_id), self._shard_id, color
+            ).seat_token
         role = "spectator" if color is None else color.value
         _log.info("client %d seated in game %d as %s", client_id, game_id, role)
-        self._send(client_id, Seated(color, room_id))
+        self._send(client_id, Seated(color, room_id, seat_token))
         # The board, straight to the newcomer, and not only to the room a moment later.
         # Running as a shard those are different journeys: the room's copy only arrives
         # once this client's gateway has finished subscribing to that room, and the

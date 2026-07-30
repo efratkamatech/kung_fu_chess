@@ -38,6 +38,7 @@ from kfchess.shared.protocol import (
     Notice,
     Play,
     Rejected,
+    Resume,
     Seated,
     Welcome,
     decode,
@@ -97,6 +98,9 @@ class NetClient:
         self._room_id: Optional[str] = None
         self._logged_in = False
         self._rejection: Optional[str] = None
+        # What proves this client's seat is its own, once it has one. Not a secret it
+        # chose: the shard minted it when it seated her, and only the shard checks it.
+        self._seat_token = ""
         # Every client -> server message waits here as a protocol object, whatever its
         # kind (a Move, Login, Play, CreateRoom or JoinRoom): the network thread pops
         # them in order and encodes each one the same way. Keeping a single queue means
@@ -126,12 +130,14 @@ class NetClient:
             elif isinstance(message, Welcome):
                 self._color = message.color
                 self._rating = message.rating
+                self._remember_seat(message.seat_token)
                 self._logged_in = True
                 _log.info("login accepted (rating %s)", message.rating)
                 self._login_results.put(None)  # login accepted
             elif isinstance(message, Seated):
                 self._color = message.color  # put in a game as this colour (None = watcher)
                 self._room_id = message.room_id  # set when seated via a room
+                self._remember_seat(message.seat_token)
                 _log.info("seated as %s in room %s", message.color, message.room_id)
                 self._match_results.put(MatchResult.seat(message.color))
             elif isinstance(message, Notice):
@@ -148,6 +154,32 @@ class NetClient:
                     self._login_results.put(message.reason)
             elif isinstance(message, Event):
                 self._events.put(message.kind)
+
+    def _remember_seat(self, seat_token: str) -> None:
+        """Keep a seat token if one came with the message; never forget one for nothing.
+
+        Most messages carry no token — a spectator's seat, an ordinary login that ends in
+        the lobby — and an empty one must not overwrite the token from the seat this
+        client is actually holding.
+        """
+        if seat_token:
+            self._seat_token = seat_token
+
+    @property
+    def seat_token(self) -> str:
+        """The proof that this client's seat is its own, or ``""`` if it holds none."""
+        with self._lock:
+            return self._seat_token
+
+    def resume(self, username: str, seat_token: str) -> None:
+        """Queue a request to be put back in the seat ``seat_token`` was issued for.
+
+        The cheap way back after a socket drops: no password, no hashing, and the shard
+        that issued the token is what checks it. The answer arrives as a
+        :class:`Welcome` carrying the colour, or a ``Rejected`` if the seat is not there
+        to be had — the same two answers a login gets, so the caller waits the same way.
+        """
+        self._outgoing.put(Resume(username, seat_token))
 
     def queue_command(self, cmd: str) -> None:
         """Queue a move command (e.g. ``"WQe2e5"``) for the network thread to send."""

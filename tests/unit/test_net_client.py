@@ -12,6 +12,7 @@ from kfchess.shared.protocol import (
     Notice,
     Play,
     Rejected,
+    Resume,
     Seated,
     State,
     Welcome,
@@ -211,3 +212,36 @@ def test_multiple_events_come_back_out_in_order():
     assert client.next_event() == "move"
     assert client.next_event() == "game_over"
     assert client.next_event() is None
+
+
+def test_a_seat_arrives_with_the_token_that_proves_it():
+    client = NetClient()
+    client.handle(encode(Seated(Color.WHITE, None, "9f2c")))
+    assert client.seat_token == "9f2c"
+
+
+def test_a_welcome_back_into_a_seat_carries_its_token_too():
+    """The password path hands back the cheap proof for next time."""
+    client = NetClient()
+    client.handle(encode(Welcome(Color.BLACK, 1200, "9f2c")))
+    assert client.seat_token == "9f2c"
+
+
+def test_a_message_with_no_token_does_not_wipe_the_one_it_holds():
+    """Most messages carry none — an empty field is silence, not a revocation."""
+    client = NetClient()
+    client.handle(encode(Seated(Color.WHITE, None, "9f2c")))
+
+    client.handle(encode(Welcome(None, 1200)))  # an ordinary lobby login
+
+    assert client.seat_token == "9f2c"
+
+
+def test_starts_holding_no_seat_token():
+    assert NetClient().seat_token == ""
+
+
+def test_resume_queues_the_token_for_the_network_thread():
+    client = NetClient()
+    client.resume("Efrat", "9f2c")
+    assert client.next_outgoing() == Resume("Efrat", "9f2c")

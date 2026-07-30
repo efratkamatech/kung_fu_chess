@@ -50,6 +50,7 @@ class MessageType(WireEnum):
     NOTICE = "notice"            # server -> client: a lobby-level notice (e.g. "no_opponent")
     CREATE_ROOM = "create_room"  # client -> server: open a new private room, I'm white
     JOIN_ROOM = "join_room"      # client -> server: join the room with this id
+    RESUME = "resume"            # client -> server: my seat back, with the token for it
     # --- deltas: server -> client, one per thing that actually happened -------
     MOVE_STARTED = "move_started"    # a piece left for another square
     SETTLED = "settled"              # a piece stopped somewhere and began cooling down
@@ -100,26 +101,33 @@ class Login:
 class Welcome:
     """Server -> client: login accepted. Carries the assigned ``color`` and ``rating``.
 
-    ``color`` is ``None`` for a spectator (no free seat). This is the unambiguous
-    "you're in" signal the client waits for before opening the window; a bad password
-    comes back as :class:`Rejected` instead.
+    ``color`` is ``None`` when the player lands in the lobby with no seat. This is the
+    unambiguous "you're in" signal the client waits for before opening the window; a bad
+    password comes back as :class:`Rejected` instead.
+
+    A colour here means she was put straight back into a game she was already in, and
+    ``seat_token`` is that seat's token — she has just proved herself with a password,
+    and this hands her the cheaper proof for next time (see :class:`Resume`). Both are
+    empty for the ordinary login that ends in the lobby.
     """
 
     type: ClassVar[MessageType] = MessageType.WELCOME
     color: Optional[Color]
     rating: int
+    seat_token: str = ""
 
     def to_dict(self) -> dict:
         return {
             "type": self.type,
             "color": None if self.color is None else self.color.value,
             "rating": self.rating,
+            "seat_token": self.seat_token,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Welcome":
         color = None if data["color"] is None else Color(data["color"])
-        return cls(color, data["rating"])
+        return cls(color, data["rating"], data.get("seat_token", ""))
 
 
 @dataclass(frozen=True)
@@ -200,23 +208,31 @@ class Seated:
     which now only confirms login and leaves the client in the lobby. ``color`` is
     ``None`` for a spectator (a room's third-and-later joiners). ``room_id`` is the
     private room's id when seated via a room, or ``None`` for a matchmade game.
+
+    ``seat_token`` is what proves this seat is hers if she comes back to it — see
+    :class:`Resume`. Empty for a spectator, who has no seat to come back to. It is sent
+    to *this connection only* and never in anything addressed to the room, which is the
+    whole reason a token is worth more than a username: everyone in the room knows the
+    username.
     """
 
     type: ClassVar[MessageType] = MessageType.SEATED
     color: Optional[Color]
     room_id: Optional[str] = None
+    seat_token: str = ""
 
     def to_dict(self) -> dict:
         return {
             "type": self.type,
             "color": None if self.color is None else self.color.value,
             "room_id": self.room_id,
+            "seat_token": self.seat_token,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Seated":
         color = None if data["color"] is None else Color(data["color"])
-        return cls(color, data.get("room_id"))
+        return cls(color, data.get("room_id"), data.get("seat_token", ""))
 
 
 @dataclass(frozen=True)
@@ -250,6 +266,37 @@ class JoinRoom:
     @classmethod
     def from_dict(cls, data: dict) -> "JoinRoom":
         return cls(data["room_id"])
+
+
+@dataclass(frozen=True)
+class Resume:
+    """Client -> server: put me back in the seat this token was issued for.
+
+    The other way back into a game, beside logging in again. A password proves who you
+    are and costs a hundred thousand hash rounds to check; this proves you are the one
+    the seat was handed to, and costs a lookup — which matters because a reconnect
+    happens on a bad network, when it happens at all, and often more than once.
+
+    The token is checked **by the shard**, not by the gateway that relays it and not by
+    anything reading the directory on the client's behalf. The shard minted it, the shard
+    owns the room the seat is in, and a gateway that inspected tokens would be a security
+    decision made in the component built to be replicated and thrown away.
+    """
+
+    type: ClassVar[MessageType] = MessageType.RESUME
+    username: str
+    seat_token: str
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "username": self.username,
+            "seat_token": self.seat_token,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Resume":
+        return cls(data["username"], data["seat_token"])
 
 
 @dataclass(frozen=True)
@@ -506,6 +553,7 @@ _BY_TYPE = {
     MessageType.NOTICE: Notice,
     MessageType.CREATE_ROOM: CreateRoom,
     MessageType.JOIN_ROOM: JoinRoom,
+    MessageType.RESUME: Resume,
     MessageType.MOVE_STARTED: MoveStarted,
     MessageType.SETTLED: Settled,
     MessageType.CAPTURED: Captured,

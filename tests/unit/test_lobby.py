@@ -30,6 +30,7 @@ from kfchess.shared.protocol import (
     Play,
     Reconnected,
     Rejected,
+    Resume,
     Seated,
     State,
     Welcome,
@@ -37,7 +38,9 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.server.lobby import Lobby
+from kfchess.services.directory import PlayerDirectory
 from kfchess.services.shared import SharedState
+from kfchess.services.store import InMemoryKeyValueStore
 from kfchess.server.user_store import UserStore
 from kfchess.shared.codes import NoticeReason, RejectReason
 
@@ -85,6 +88,11 @@ def login(hub, client_id, username="Efrat", password="pw"):
 
 def of_type(client, cls):
     return [m for m in client.received if isinstance(m, cls)]
+
+
+def seat(client):
+    """The last seat this client was given. Its token is random, so tests read fields."""
+    return of_type(client, Seated)[-1]
 
 
 def login_ready(hub, name, new_board=_rook_board):
@@ -142,8 +150,8 @@ def test_a_wrong_password_is_refused_and_can_be_retried():
 
 def test_two_logged_in_players_who_press_play_are_matched():
     _, white, black, _, _ = seat_two()
-    assert of_type(white, Seated)[-1] == Seated(Color.WHITE)  # first to seek gets white
-    assert of_type(black, Seated)[-1] == Seated(Color.BLACK)
+    assert seat(white).color is Color.WHITE  # first to seek gets white
+    assert seat(black).color is Color.BLACK
 
 
 def test_a_matched_game_shows_both_players_the_board_and_start_sound():
@@ -237,8 +245,8 @@ def test_a_player_who_gave_up_waiting_can_press_play_again():
     other, other_id = login_ready(hub, "Dan")
     hub.receive(other_id, encode(Play()))
 
-    assert of_type(lone, Seated)[-1] == Seated(Color.WHITE)  # the second search worked
-    assert of_type(other, Seated)[-1] == Seated(Color.BLACK)
+    assert seat(lone).color is Color.WHITE  # the second search worked
+    assert seat(other).color is Color.BLACK
 
 
 # --- moves and routing --------------------------------------------------------
@@ -440,7 +448,7 @@ def open_room(hub, creator_name="Efrat"):
 def test_creating_a_room_seats_the_creator_as_white_with_a_shareable_id():
     hub = make_lobby()
     creator, _, room_id = open_room(hub)
-    assert of_type(creator, Seated)[-1] == Seated(Color.WHITE, room_id)
+    assert (seat(creator).color, seat(creator).room_id) == (Color.WHITE, room_id)
     assert room_id is not None
     assert of_type(creator, State)[-1].snapshot.room_id == room_id  # shown in the window
 
@@ -450,7 +458,7 @@ def test_joining_a_room_seats_the_second_player_as_black():
     _, _, room_id = open_room(hub)
     joiner, jid = login_ready(hub, "Dan")
     hub.receive(jid, encode(JoinRoom(room_id)))
-    assert of_type(joiner, Seated)[-1] == Seated(Color.BLACK, room_id)
+    assert (seat(joiner).color, seat(joiner).room_id) == (Color.BLACK, room_id)
 
 
 def test_a_third_joiner_watches_as_a_spectator_with_no_colour():
@@ -460,7 +468,7 @@ def test_a_third_joiner_watches_as_a_spectator_with_no_colour():
     hub.receive(bid, encode(JoinRoom(room_id)))
     watcher, wid = login_ready(hub, "Sam")
     hub.receive(wid, encode(JoinRoom(room_id)))
-    assert of_type(watcher, Seated)[-1] == Seated(None, room_id)
+    assert (seat(watcher).color, seat(watcher).room_id) == (None, room_id)
 
 
 def test_a_spectator_cannot_move():
@@ -531,7 +539,9 @@ def test_reconnecting_within_the_countdown_reseats_the_player():
     rid = hub.connect(returner.send)
     login(hub, rid, "Dan")  # same username, still within the window
 
-    assert of_type(returner, Welcome)[-1] == Welcome(Color.BLACK, START_RATING)
+    welcome = of_type(returner, Welcome)[-1]
+    assert (welcome.color, welcome.rating) == (Color.BLACK, START_RATING)
+    assert welcome.seat_token == seat(black).seat_token  # the same seat, provably
     assert of_type(returner, State)  # got the board back, straight into the game
 
 
@@ -678,8 +688,8 @@ def test_a_refused_room_leaves_the_player_free_to_do_something_else():
     hub.receive(refused_id, encode(Play()))
     hub.receive(other_id, encode(Play()))
 
-    assert of_type(refused, Seated)[-1] == Seated(Color.WHITE)  # matched normally
-    assert of_type(other, Seated)[-1] == Seated(Color.BLACK)
+    assert seat(refused).color is Color.WHITE  # matched normally
+    assert seat(other).color is Color.BLACK
 
 
 # --- addressing a room instead of each of its members --------------------------
@@ -742,3 +752,89 @@ def test_the_displaced_connection_no_longer_holds_the_seat():
 
     assert white.received[-1] == Rejected(RejectReason.NOT_A_PLAYER)
     assert len(white.received) == before + 1  # and it hears nothing of the game
+
+
+# --- resuming a seat: the cheap way back ---------------------------------------
+
+def test_resuming_with_the_right_token_puts_her_back_without_a_password():
+    """The point of the token: no hundred thousand hash rounds on a flaky network."""
+    hub, white, black, wid, bid = seat_two()
+    token = seat(black).seat_token
+    hub.disconnect(bid)
+
+    returner = FakeClient()
+    hub.receive(hub.connect(returner.send), encode(Resume("Dan", token)))
+
+    assert of_type(returner, Welcome)[-1].color is Color.BLACK
+    assert of_type(returner, State) != []                # and shown the board
+    assert of_type(white, Reconnected) != []             # her opponent's countdown ends
+
+
+def test_a_wrong_token_is_refused_by_the_shard_that_issued_the_right_one():
+    """Knowing the username is not enough, which is the whole reason a token exists."""
+    hub, white, black, wid, bid = seat_two()
+    hub.disconnect(bid)
+
+    impostor = FakeClient()
+    hub.receive(hub.connect(impostor.send), encode(Resume("Dan", "not-the-token")))
+
+    assert impostor.received[-1] == Rejected(RejectReason.BAD_SEAT)
+    assert of_type(impostor, Welcome) == []
+    assert of_type(white, Reconnected) == []  # and Dan's countdown is still running
+
+
+def test_resuming_a_seat_nobody_holds_is_refused_the_same_way():
+    """One answer for every failure, so a caller cannot map the seats it does not hold."""
+    hub = make_lobby()
+    stranger = FakeClient()
+
+    hub.receive(hub.connect(stranger.send), encode(Resume("Nobody", "made-up")))
+
+    assert stranger.received[-1] == Rejected(RejectReason.BAD_SEAT)
+
+
+def test_a_seat_on_another_shard_is_not_resumable_here():
+    """The directory is shared; the games are not. This shard can only seat its own."""
+    store = InMemoryKeyValueStore()
+    here = Lobby(_rook_board, UserStore(":memory:"), SharedState.on(store, "sh1"))
+    elsewhere = PlayerDirectory(store)
+    away = elsewhere.take_seat("Dan", "0", "sh2", Color.BLACK)
+
+    client = FakeClient()
+    here.receive(here.connect(client.send), encode(Resume("Dan", away.seat_token)))
+
+    assert client.received[-1] == Rejected(RejectReason.BAD_SEAT)
+
+
+def test_a_finished_game_is_forgotten_so_the_next_login_starts_fresh():
+    """Her seat outlived the game only long enough for the last person to leave it."""
+    store = InMemoryKeyValueStore()
+    hub = Lobby(_rook_board, UserStore(":memory:"), SharedState.on(store))
+    white, wid = login_ready(hub, "Efrat")
+    black, bid = login_ready(hub, "Dan")
+    hub.receive(wid, encode(Play()))
+    hub.receive(bid, encode(Play()))
+
+    hub.disconnect(wid)
+    hub.disconnect(bid)  # the last one out; the game is discarded
+
+    assert PlayerDirectory(store).seat_of("Efrat") is None
+    assert PlayerDirectory(store).seat_of("Dan") is None
+
+
+def test_a_spectator_gets_no_seat_and_no_token():
+    """There is nothing to come back to, so nothing is written down."""
+    store = InMemoryKeyValueStore()
+    hub = Lobby(
+        _rook_board, UserStore(":memory:"),
+        SharedState.on(store, generate_id=lambda: "AAAAAA"),
+    )
+    _, creator_id = login_ready(hub, "Efrat")
+    hub.receive(creator_id, encode(CreateRoom()))
+    for name in ("Dan", "Sam"):
+        watcher, joiner_id = login_ready(hub, name)
+        hub.receive(joiner_id, encode(JoinRoom("AAAAAA")))
+
+    assert seat(watcher).color is None
+    assert seat(watcher).seat_token == ""
+    assert PlayerDirectory(store).seat_of("Sam") is None

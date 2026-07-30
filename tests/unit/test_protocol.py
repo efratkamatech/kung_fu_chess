@@ -19,6 +19,7 @@ from kfchess.shared.protocol import (
     ProtocolError,
     Reconnected,
     Rejected,
+    Resume,
     Seated,
     Settled,
     State,
@@ -52,7 +53,8 @@ def a_snapshot():
         Move("WQe2e5"),
         Login("Efrat", "secret"),
         Welcome(Color.WHITE, 1200),
-        Welcome(None, 1350),  # a spectator: no colour
+        Welcome(None, 1350),  # straight into the lobby: no seat
+        Welcome(Color.BLACK, 1200, "9f2c"),  # back into a seat, with its token
         Rejected(RejectReason.BAD_PASSWORD),
         State(a_snapshot()),
         Event("capture"),
@@ -60,9 +62,11 @@ def a_snapshot():
         Seated(Color.WHITE),
         Seated(None),  # a spectator: no colour
         Seated(Color.BLACK, "7C2F"),  # seated via a room, with its id
+        Seated(Color.WHITE, None, "9f2c"),  # a seat and the proof it is hers
         Notice(NoticeReason.NO_OPPONENT),
         CreateRoom(),
         JoinRoom("7C2F"),
+        Resume("Efrat", "9f2c"),
         # --- the deltas ---
         MoveStarted(7, "wQ", "e2", "e5", 1000, 4000),
         Settled(7, "wQ", "e5", 4000, 1000),

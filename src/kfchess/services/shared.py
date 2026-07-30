@@ -33,6 +33,10 @@ class SharedState:
     rooms: Rooms
     matchmaker: Matchmaker
     directory: PlayerDirectory
+    # Who *this* process is, in the directory's answers. A seat records the shard running
+    # it, and a shard reading one back has to recognise its own name to know whether the
+    # game is here or somewhere it will have to send the player instead.
+    shard_id: str = SHARD_ID
 
     @classmethod
     def on(
@@ -54,4 +58,5 @@ class SharedState:
             rooms=Rooms(store, shard_id, generate_id=generate_id),
             matchmaker=Matchmaker(store, now_ms=now_ms),
             directory=PlayerDirectory(store),
+            shard_id=shard_id,
         )

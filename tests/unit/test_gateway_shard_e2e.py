@@ -141,7 +141,8 @@ def open_room_with_a_spectator():
 def test_a_spectator_is_seated_without_a_colour_and_sees_the_board():
     _, _, _, _, _, watcher = open_room_with_a_spectator()
 
-    assert watcher.of_type(Seated)[-1] == Seated(None, "AAAAAA")
+    seated = watcher.of_type(Seated)[-1]
+    assert (seated.color, seated.room_id) == (None, "AAAAAA")
     assert watcher.of_type(State) != []  # the whole board, straight to the newcomer
 
 

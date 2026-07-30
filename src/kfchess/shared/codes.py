@@ -44,12 +44,15 @@ class Phase(WireEnum):
 class RejectReason(WireEnum):
     """Why the server refused something a client asked for.
 
-    Carried by :class:`~kfchess.shared.protocol.Rejected`. The first two answer a
+    Carried by :class:`~kfchess.shared.protocol.Rejected`. The first three answer a
     connection-level request; the rest are the ways a move can be turned down, decided
     by the session against the live board.
     """
 
     BAD_PASSWORD = "bad_password"        # login: the account exists, the password is wrong
+    # resume: the token offered does not match the one that seat was issued with. The
+    # shard decides this, because the shard minted the token and owns the room it is for.
+    BAD_SEAT = "bad_seat"
     NOT_A_PLAYER = "not_a_player"        # move: a spectator has no seat to move from
     GAME_OVER = "game_over"              # move: a king has already fallen
     # move: the command did not parse (bad length/letters, or a square off the board).
