@@ -1,0 +1,51 @@
+# The server and its database, for local development.
+#
+#   docker compose up --build
+#   python client_main.py --url ws://localhost:8765     (twice, in two terminals)
+#
+# The credentials below are development credentials and are meant to be in the file:
+# nothing outside this compose network can reach the database, and the point of S1 is
+# that a fresh clone comes up with one command. A deployed environment gets them from a
+# secret instead (S6 puts DATABASE_URL in a Kubernetes Secret).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kfchess
+      POSTGRES_PASSWORD: kfchess
+      POSTGRES_DB: kfchess
+    volumes:
+      # The data itself, so ratings survive `docker compose down`...
+      - pgdata:/var/lib/postgresql/data
+      # ...and the schema, which the official image runs once, when it initialises an
+      # empty data directory. See migrations/001_initial.sql.
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # The server must not start against a database that is still starting up: its very
+      # first statement is a CREATE TABLE.
+      test: ["CMD-SHELL", "pg_isready -U kfchess -d kfchess"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    ports:
+      # Published so `psql` and the PostgreSQL integration tests can reach it from the
+      # host (see tests/integration/). The server does not use this -- it talks to
+      # `postgres:5432` inside the compose network -- so a deployment drops it.
+      - "5432:5432"
+
+  server:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://kfchess:kfchess@postgres:5432/kfchess
+      # Bind every interface: "localhost" inside a container means only the container.
+      KFC_SERVER_HOST: 0.0.0.0
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

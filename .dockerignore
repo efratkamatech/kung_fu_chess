@@ -1,0 +1,31 @@
+# Keep the build context to what the image actually needs. Everything here would either
+# bloat the context, or -- worse -- get baked into the image: the accounts database and
+# the logs are runtime state that belongs to whoever is running, never to the build.
+.git
+.github
+.venv
+venv
+env
+
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+
+.pytest_cache
+.ruff_cache
+.coverage
+.coverage.*
+htmlcov
+
+# Runtime state, not source.
+users.db
+server.log
+client.log
+
+# The graphics front-ends and their tests never run in this image.
+tests
+docs
+*.md
+!README.md

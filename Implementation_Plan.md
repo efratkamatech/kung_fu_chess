@@ -3,7 +3,7 @@
 **Project:** Kung Fu Chess
 **Author:** efratkamatech
 **Date:** 27 July 2026
-**Design rationale:** [`Server_Design_EN.md`](Server_Design_EN.md) · [`Server_Design.md`](Server_Design.md) (Hebrew)
+**Design rationale:** [`Server_Design_EN.md`](Server_Design_EN.md)
 
 This is the executable companion to the design document. The design says *what* and
 *why*; this says *which files, in what order, and how we know a stage is done*.
@@ -247,12 +247,13 @@ passes without modification, the protocol change is transparent to the game.
 
 ### Exit criteria
 
-- [ ] `ruff check src tests` clean; `pytest` green; coverage still 100%
-- [ ] A local two-client game plays identically to before, by eye
-- [ ] Measured bytes/second per client dropped by ≥50× (measure with the same script that
-      produced the 2,148-byte figure)
-- [ ] `test_e2e_client_server.py` passes with no changes
-- [ ] Creating rooms past the id-space limit raises rather than hangs
+- [x] `ruff check src tests` clean; `pytest` green; coverage still 100% — 549 tests
+- [ ] A local two-client game plays identically to before, **by eye** — still open; two
+      headless clients play a full move over real sockets, but nobody has watched it
+- [x] Measured bytes/second per client dropped by ≥50× — **×98.8** (537 B/s per client,
+      against 53,000 B/s for the old 2,650-byte snapshot at 20 Hz)
+- [x] `test_e2e_client_server.py` passes with no changes
+- [x] Creating rooms past the id-space limit raises rather than hangs
 
 ### Risks
 
@@ -285,12 +286,23 @@ services:
   server:      # build: ., depends_on postgres (condition: service_healthy)
 ```
 
-**New: `src/kfchess/server/user_store_pg.py`** — the same public interface as `UserStore`:
-`register_or_login`, `get_rating`, `set_rating`, `record_win`. PBKDF2 parameters are
-unchanged, so existing hashes remain valid.
+**Changed: `src/kfchess/server/user_store.py`** — ~~a second class in
+`user_store_pg.py`, with a shared interface~~ **one implementation, parameterised by a
+`Dialect`.** Built differently from the plan, deliberately: risk #11 below is that "two
+code paths for accounts drift apart", and the honest way to retire a risk is not to
+mitigate it but to remove it. The two backends differ in exactly two things — how a bound
+parameter is spelled (`?` / `%s`) and what a bytes column is called (`BLOB` / `BYTEA`) —
+so those two things are a frozen dataclass, and the register-or-login rule exists once.
+PBKDF2 parameters are shared for the same reason, so a hash written by either backend
+stays valid under the other. `psycopg` is imported only when a DSN is opened, so a
+machine without it still imports and tests everything else.
 
-**Changed: `src/kfchess/server/user_store.py`** — extract the interface so both backends
-satisfy it. The SQLite implementation stays exactly as it is.
+**Changed: `Dockerfile` + `certs/`** — an optional trust-anchor hook. On a network that
+inspects TLS (a filter or a corporate proxy re-signing every connection), the host trusts
+the interceptor's CA and a fresh container does not, so `pip` inside the build cannot
+verify pypi.org. Any `.crt` dropped in `certs/` is trusted for the build; the directory is
+git-ignored, because which authority someone's traffic passes through describes their
+network, not this project.
 
 **Changed: `src/kfchess/config.py`** — read `DATABASE_URL` from the environment; fall back
 to the SQLite path when unset, so local runs and the ~470 tests are unaffected.
@@ -304,10 +316,20 @@ test, skipped when `DATABASE_URL` is unset, so CI stays green without a database
 
 ### Exit criteria
 
-- [ ] `docker compose up` starts cleanly from a fresh clone
-- [ ] Two `client_main.py` instances play a full game against the containerised server
-- [ ] ELO persists across `docker compose restart`
-- [ ] The full test suite still passes locally against SQLite
+- [x] `docker compose up` starts cleanly from a fresh clone — Postgres healthy, the
+      schema applied from `migrations/`, the server connected. (On a TLS-inspecting
+      network, `certs/` has to be filled first; see the note above.)
+- [x] Two clients play against the containerised server — verified with two **headless**
+      clients over real sockets: matched, a real move round-tripped to both, and the
+      resign countdown decided the game. The windowed `client_main.py` has still not been
+      run against it, the same gap S0 left open
+- [x] ELO persists across `docker compose restart` — 1216/1184 written to Postgres, and
+      the winner logged back in at 1216 afterwards (a wrong password still refused, so
+      the PBKDF2 hash survives the `BYTEA` round trip)
+- [x] The full test suite still passes locally against SQLite — 556 tests, 100% coverage
+- [ ] `pytest tests/integration` against a real PostgreSQL — needs `psycopg` installed on
+      the host (`pip install -e ".[server]"`). The code path it covers is already proven
+      by the running container; this is the regression net, not the proof
 
 ### Risks
 
@@ -408,6 +430,12 @@ The TTL also frees ids stranded by a shard crash.
 `Lobby._reconnect_seat`'s scan over every game with an O(1) lookup, **and closes the
 username-only reconnect gap** by requiring the token to match.
 
+Only Auth reads the directory, and it does so on the login path, so the seat rides back
+on the login response with no extra round trip. The WS Gateway is handed `room_id` and
+subscribes; the **shard** verifies the `seat_token` when `room.{id}.reconnect` arrives,
+because it issued the token and owns the room. Neither the key schema nor the token
+check leaks into the gateway replicas.
+
 **Changed: `src/kfchess/server/lobby.py`** — after this stage it is only the shard's room
 manager. Login, matchmaking, and room creation have all left.
 
@@ -423,7 +451,8 @@ SEAT_TOKEN_BYTES = 16       # reconnect token; username alone is not proof of id
 
 - [ ] Matchmaking works with two shards running — the two players may land on either
 - [ ] Reconnect works after switching gateways
-- [ ] A wrong `seat_token` is rejected
+- [ ] A wrong `seat_token` is rejected **by the shard** — the WS Gateway relays it
+      without inspecting it, and never reads the directory itself
 - [ ] Room ids are unique across shards under a concurrent-creation test
 
 ---
@@ -509,7 +538,7 @@ move them out of the "estimated" column.
 
 - [ ] `/metrics` and `/healthz` on every service
 - [ ] `loadbot.py` drives ≥1,000 concurrent connections locally
-- [ ] The three measurements above are recorded and written back into `Server_Design.md`
+- [ ] The three measurements above are recorded and written back into `Server_Design_EN.md`
 
 ---
 
@@ -564,7 +593,7 @@ goes in `config.py`, next to the constant it relates to, with the comment style 
 use there.
 
 **Documentation.** Each stage updates `docs/architecture.md` where it changes a layer's
-responsibility, and `Server_Design.md` where it replaces an estimate with a measurement.
+responsibility, and `Server_Design_EN.md` where it replaces an estimate with a measurement.
 
 ---
 
@@ -589,6 +618,22 @@ responsibility, and `Server_Design.md` where it replaces an estimate with a meas
 
 **Complete:** the six original milestones — event bus, authoritative server and thin
 client, login, passwords with SQLite and ELO, matchmaking with disconnect handling, rooms
-with spectators and logging. ~470 tests, 100% coverage, green CI.
+with spectators and logging.
 
-**Next:** S0.
+**Complete: S0.** Delta protocol, the client that rebuilds the board from it, the
+event-driven tick with elapsed-time advancement, and the `RoomManager` hang. Measured
+×98.8 traffic cut.
+
+**Complete: S1.** `docker compose up` brings up PostgreSQL and the server; accounts and
+ELO live in the database and survive a restart. 556 tests, 100% coverage, ruff clean.
+
+**Open from both, and only these:** nobody has watched the **windowed** client against
+either build — S0 changed what is drawn between messages, and S1 changed where accounts
+live, and both were verified with headless clients over real sockets instead. Plus
+`tests/integration` against PostgreSQL, which needs `psycopg` on the host.
+
+**Known gap, S5's to close:** in a container the server writes its log to a *file*
+(`config.SERVER_LOG`), so `docker compose logs server` shows nothing. S5 already owns the
+logging change; a stream handler alongside the file one is the fix.
+
+**Next:** S2.

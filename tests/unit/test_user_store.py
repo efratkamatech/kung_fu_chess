@@ -1,7 +1,15 @@
 """Tests for UserStore: accounts, password hashing, ratings (in-memory SQLite)."""
 
+from pathlib import Path
+
 from kfchess.config import START_RATING
-from kfchess.server.user_store import UserStore
+from kfchess.server.user_store import (
+    POSTGRES,
+    SQLITE,
+    UserStore,
+    dialect_for,
+    spell,
+)
 
 
 def a_store():
@@ -58,3 +66,41 @@ def test_accounts_persist_across_reopening_the_database(tmp_path):
     reopened = UserStore(db)
     assert reopened.register_or_login("Efrat", "secret") == 1250  # survived the restart
     reopened.close()
+
+
+# --- picking a backend --------------------------------------------------------
+
+def test_a_path_means_sqlite_and_a_dsn_means_postgres():
+    assert dialect_for("users.db") is SQLITE
+    assert dialect_for(Path("/var/lib/kfchess/users.db")) is SQLITE
+    assert dialect_for(":memory:") is SQLITE
+    assert dialect_for("postgresql://kfchess:pw@postgres:5432/kfchess") is POSTGRES
+    assert dialect_for("postgres://kfchess@localhost/kfchess") is POSTGRES
+
+
+def test_a_statement_is_spelled_for_the_backend_it_is_sent_to():
+    statement = "UPDATE users SET rating = ? WHERE username = ?"
+    assert spell(statement, SQLITE) == statement  # SQLite is the dialect it is written in
+    assert spell(statement, POSTGRES) == (
+        "UPDATE users SET rating = %s WHERE username = %s"
+    )
+
+
+def test_the_two_backends_name_a_bytes_column_differently():
+    # The salt and the hash are raw bytes, and that is the one column type that differs.
+    assert SQLITE.blob == "BLOB"
+    assert POSTGRES.blob == "BYTEA"
+
+
+def test_the_default_target_follows_the_configured_database(monkeypatch, tmp_path):
+    """``UserStore()`` is what serve() calls; it must land wherever config points."""
+    import kfchess.server.user_store as module
+
+    db = tmp_path / "configured.db"
+    monkeypatch.setattr(module, "DATABASE_URL", "")
+    monkeypatch.setattr(module, "USERS_DB", db)
+    store = UserStore()
+    store.register_or_login("Efrat", "secret")
+    store.close()
+
+    assert db.exists()  # it used the configured path, not a hardcoded one

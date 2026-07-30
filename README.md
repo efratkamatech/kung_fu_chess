@@ -63,6 +63,17 @@ python server_main.py                          # listens on ws://localhost:8765
 python client_main.py --url ws://localhost:8765
 ```
 
+**In containers** — the same server, with PostgreSQL instead of the SQLite file. Needs
+Docker; the clients still run on the host:
+
+```bash
+docker compose up --build
+```
+
+Accounts and ratings live in a named volume, so they survive `docker compose down`. The
+server picks its database from `DATABASE_URL`: set, it speaks PostgreSQL; unset — every
+local run above — it keeps the SQLite file. Nothing else differs between the two.
+
 ### Controls (windowed game & client)
 
 - **Left-click** a piece to select it (a green outline marks it), then **left-click** a
@@ -79,13 +90,16 @@ src/kfchess/   # source, organized by layer (model, movement, rules, engine,
                # vocabulary the server and client both speak)
 tests/         # unit tests (mirror src) + text-fixture integration tests
 docs/          # architecture.md and walkthroughs
+migrations/    # the PostgreSQL schema, applied on the database's first boot
+Dockerfile  docker-compose.yml                              # the containerised server
 ```
 
 ## Tech
 
 Python (standard library only at the core), `websockets` for the server, `opencv-python`
-for rendering and input, and `sqlite3` (stdlib) for accounts and ratings. Sound in the
-windowed game uses `winsound` and is Windows-only; the game runs without it elsewhere.
+for rendering and input, and `sqlite3` (stdlib) — or PostgreSQL via `psycopg`, under
+Docker — for accounts and ratings. Sound in the windowed game uses `winsound` and is
+Windows-only; the game runs without it elsewhere.
 
 ## Test
 

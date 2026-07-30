@@ -28,3 +28,7 @@ Thumbs.db
 # Server/client activity logs (M6)
 server.log
 client.log
+
+# Extra CA certificates for the image build (S1). These describe one machine's network
+# — a TLS-inspecting proxy or filter — not this project. See certs/README.md.
+certs/*.crt
