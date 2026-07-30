@@ -19,6 +19,7 @@ without rewriting the core.
 | Role & Access | Identity → role (player/spectator/referee/...) → permission, via Role registry | Board mutation, movement legality, rendering |
 | Session/Match Manager | Create/destroy Session Actors, matchmaking, role assignment, reconnection-token mapping | Movement rules, rendering, wire protocol details |
 | Transport/Protocol | Transport-agnostic messages (MoveRequest/MoveAccepted/MoveRejected/StateSync/Heartbeat/Reconnect) + reliability (idempotent move ids, acks, heartbeats) | Game rules, board mutation, rendering |
+| Client game state | Folding the server's delta messages back into a board, interpolating in-flight motion between the two times a move announces, and estimating the server's clock from the last stamp seen; hands the Renderer the same GameSnapshot it already draws | Adjudication of any kind — captures, blocking, promotion and game-over are announced by the server and obeyed; sockets, pixels, chess legality |
 | ScoreKeeper | Per-player running score, subscribed to capture/promotion events, using a piece-value registry (pawn 1, knight/bishop 3, rook 5, queen 9, king ∞) | Game rules, board mutation |
 | MoveHistory | Per-color move log in algebraic notation, server-timestamped, subscribed to move events | Game rules, rendering |
 | Controller | Click interpretation, selected-cell state — one command source among several feeding Session Actor | Chess legality, board mutation, rendering |
@@ -52,7 +53,13 @@ without rewriting the core.
 
 ## Open (decide later)
 - Wire format (JSON vs binary), Session Actor concurrency primitive
-  (asyncio vs other), snapshot/event-log frequency, multi-process scaling.
+  (asyncio vs other), snapshot/event-log frequency.
+- ~~**Multi-process scaling**~~ — answered in [`../Server_Design_EN.md`](../Server_Design_EN.md):
+  stateless gateways over stateful game shards, PostgreSQL for accounts and results,
+  Redis for the room/player/matchmaking maps, NATS between services. The measured
+  finding there is that the protocol, not the process count, is the first bottleneck —
+  a full 2,148-byte snapshot at 20 Hz per client is ~3.5 Tbps at 10M concurrent, so
+  delta messages come before any infrastructure work.
 - ~~**Unify the collision passes**~~ — **done**. The RealTimeArbiter used to run a
   mid-path pass (moving-vs-moving on a shared cell or a head-on swap, plus
   moving-vs-*settled* along a mover's path) and *then* an arrival pass (landing,

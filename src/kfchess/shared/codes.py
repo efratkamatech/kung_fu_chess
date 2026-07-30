@@ -72,3 +72,7 @@ class NoticeReason(WireEnum):
 
     NO_OPPONENT = "no_opponent"    # the matchmaking search waited too long
     NO_SUCH_ROOM = "no_such_room"  # the id given to "join room" matches no open room
+    # "create room" could not find a free id. Practically unreachable -- it means the
+    # id space is exhausted or the generator is broken -- but a player being told to try
+    # again is the only acceptable alternative to the server hanging on the attempt.
+    ROOM_UNAVAILABLE = "room_unavailable"

@@ -21,6 +21,12 @@ from kfchess.model.color import Color
 from kfchess.shared.codes import Phase
 
 
+# A snapshot built for a local game names no pieces: nothing there refers to a piece
+# except by where it is, so there is no id to give. Only the server numbers them, so
+# that its delta messages have something to point at.
+NO_PIECE_ID = -1
+
+
 @dataclass(frozen=True)
 class CellView:
     """One settled piece on the board: its token, lifecycle state, and cooldown."""
@@ -28,6 +34,10 @@ class CellView:
     token: str            # the piece token, e.g. "wK"
     state: str            # a PieceState name: "IDLE" / "COOLDOWN" / "JUMPING"
     cooldown: float = 0.0  # remaining cooldown fraction (1.0 -> 0.0); only for COOLDOWN
+    # The server's name for this piece, so a later delta ("piece 7 was captured") can be
+    # matched to it. A snapshot is the *only* place a client learns the id of a piece
+    # that has not moved yet, which is why it rides along even though nothing draws it.
+    piece_id: int = NO_PIECE_ID
 
 
 @dataclass(frozen=True)
@@ -37,6 +47,7 @@ class MovingView:
     token: str
     row: float
     col: float
+    piece_id: int = NO_PIECE_ID
 
 
 @dataclass(frozen=True)
@@ -75,13 +86,15 @@ class GameSnapshot:
                         "token": cell.token,
                         "state": cell.state,
                         "cooldown": cell.cooldown,
+                        "piece_id": cell.piece_id,
                     }
                     for cell in row
                 ]
                 for row in self.cells
             ],
             "moving": [
-                {"token": m.token, "row": m.row, "col": m.col} for m in self.moving
+                {"token": m.token, "row": m.row, "col": m.col, "piece_id": m.piece_id}
+                for m in self.moving
             ],
             "scores": {color.value: value for color, value in self.scores.items()},
             "logs": {color.value: lines for color, lines in self.logs.items()},
@@ -104,12 +117,20 @@ class GameSnapshot:
             [
                 None
                 if cell is None
-                else CellView(cell["token"], cell["state"], cell["cooldown"])
+                else CellView(
+                    cell["token"],
+                    cell["state"],
+                    cell["cooldown"],
+                    cell.get("piece_id", NO_PIECE_ID),
+                )
                 for cell in row
             ]
             for row in data["cells"]
         ]
-        moving = [MovingView(m["token"], m["row"], m["col"]) for m in data["moving"]]
+        moving = [
+            MovingView(m["token"], m["row"], m["col"], m.get("piece_id", NO_PIECE_ID))
+            for m in data["moving"]
+        ]
         scores = {Color(prefix): value for prefix, value in data["scores"].items()}
         logs = {Color(prefix): lines for prefix, lines in data["logs"].items()}
         names = {Color(prefix): name for prefix, name in data["names"].items()}

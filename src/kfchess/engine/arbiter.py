@@ -199,10 +199,10 @@ class RealTimeArbiter:
             progress[cooldown.piece] = max(0.0, min(1.0, remaining))
         return progress
 
-    def _notify_capture(self, victim: Piece) -> None:
+    def _notify_capture(self, victim: Piece, at_ms: int) -> None:
         """Tell observers a piece was captured, and end the game if it was a king."""
         for observer in self._observers:
-            observer.on_capture(victim)
+            observer.on_capture(victim, at_ms)
         if victim.piece_type.is_king:
             self._end_game(victim.color.opponent)
 
@@ -212,7 +212,7 @@ class RealTimeArbiter:
             self._game_over = True
             self._winner = winner
             for observer in self._observers:
-                observer.on_game_over()
+                observer.on_game_over(winner)
 
     def moving_pieces(self, now_ms: int) -> List[MovingPiece]:
         """A snapshot of every in-flight piece and its interpolated position at
@@ -227,20 +227,43 @@ class RealTimeArbiter:
             for m in self._motions
         ]
 
+    def next_event_ms(self) -> Optional[int]:
+        """When the earliest pending event is due, or ``None`` if nothing is outstanding.
+
+        A motion's arrival, a jump landing, or a cooldown expiring — everything
+        :meth:`resolve` would act on next. A caller driving the clock can therefore sleep
+        until exactly then instead of polling on a fixed interval.
+
+        Mid-path meetings are deliberately not scheduled here. They are found *inside*
+        the window ``resolve`` is handed and applied with their own true time, so waking
+        on the arrival that bounds them costs no accuracy and no later a wake-up than a
+        fixed interval already gives.
+        """
+        due = [motion.arrival_ms for motion in self._motions]
+        due += [jump.end_ms for jump in self._jumps]
+        due += [cooldown.ready_ms for cooldown in self._cooldowns]
+        return min(due) if due else None
+
     def start_motion(
         self, piece: Piece, source: Position, target: Position, now_ms: int
-    ) -> None:
-        """Begin moving ``piece`` from ``source`` to ``target`` starting at ``now_ms``."""
+    ) -> Motion:
+        """Begin moving ``piece`` from ``source`` to ``target`` starting at ``now_ms``.
+
+        Returns the motion it created, so the caller can announce *when* the piece is due
+        without recomputing the arrival from the distance and the speed.
+        """
         distance = max(
             abs(target.row - source.row), abs(target.col - source.col)
         )
         arrival_ms = now_ms + distance * self._ms_per_cell
-        self._motions.append(
-            Motion(piece, source, target, now_ms, arrival_ms, self._next_sequence)
+        motion = Motion(
+            piece, source, target, now_ms, arrival_ms, self._next_sequence
         )
+        self._motions.append(motion)
         self._next_sequence += 1
         self._settle_ms.pop(source, None)  # it is no longer settled on its origin
         piece.state = PieceState.MOVING
+        return motion
 
     def start_jump(self, piece: Piece, cell: Position, now_ms: int) -> None:
         """Make ``piece`` jump in place on ``cell``, airborne until the duration passes."""
@@ -276,10 +299,14 @@ class RealTimeArbiter:
         # piece's cooldown is dropped when it is captured, so none lingers here.
         for jump in list(self._jumps):
             if jump.end_ms <= now_ms:
-                self._land(jump.piece, now_ms)
+                self._land(jump, now_ms)
         for cooldown in self._cooldowns:
             if cooldown.ready_ms <= now_ms:
                 cooldown.piece.state = PieceState.IDLE
+                for observer in self._observers:
+                    # Its own ready time, not the tick that noticed it: a listener
+                    # drawing the gauge needs when it actually ended.
+                    observer.on_cooldown_done(cooldown.piece, cooldown.ready_ms)
         self._cooldowns = [c for c in self._cooldowns if c.ready_ms > now_ms]
 
     def _earliest_arrival(self, now_ms: int) -> Optional[Motion]:
@@ -299,9 +326,9 @@ class RealTimeArbiter:
         passing and keep going, or stop one cell short of a friend."""
         _at, kind, motion, cell = event
         if kind == "eat":
-            self._eat(motion)  # two movers meet: the later one eats the earlier
+            self._eat(motion, _at)  # two movers meet: the later one eats the earlier
         elif kind == "eat_settled":
-            self._eat_settled(cell)  # a mover captures a settled piece and continues
+            self._eat_settled(cell, _at)  # a mover captures a settled piece, continues
         else:  # "block": the later mover stops one cell short of a friend
             self._block(motion, cell, _at)
 
@@ -320,7 +347,7 @@ class RealTimeArbiter:
         if defender is not None:
             # The airborne jumper captures the arriving enemy; it does not move.
             self._board.remove(motion.source)
-            self._notify_capture(motion.piece)
+            self._notify_capture(motion.piece, motion.arrival_ms)
             self._land(defender, now_ms)
             return
 
@@ -332,23 +359,26 @@ class RealTimeArbiter:
             stop_cell = self._cell_before(motion, motion.target)
             self._board.place(stop_cell, motion.piece)
             self._settle_ms[stop_cell] = motion.arrival_ms
-            self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
+            self._begin_cooldown(motion.piece, stop_cell, now_ms, self._cooldown_ms)
             return
         if occupant is not None:
-            self._capture_occupant(occupant)  # taken; drop its motion/cooldown too
+            # Taken; drop its motion/cooldown too.
+            self._capture_occupant(occupant, motion.arrival_ms)
         self._board.place(motion.target, motion.piece)
         self._settle_ms[motion.target] = motion.arrival_ms
-        self._begin_cooldown(motion.piece, now_ms, self._cooldown_ms)
+        # Promote *before* announcing the landing, so observers are told what the piece
+        # became rather than what it was on the way.
         self._promotion.apply(motion.piece, motion.target, self._board)
+        self._begin_cooldown(motion.piece, motion.target, now_ms, self._cooldown_ms)
 
-    def _capture_occupant(self, occupant: Piece) -> None:
+    def _capture_occupant(self, occupant: Piece, at_ms: int) -> None:
         """Capture the piece a mover just landed on: notify (ending the game if it was a
         king) and cancel any motion or cooldown it still held.
 
         The victim may be a settled piece on cooldown, or a mover still sitting on its
         origin with a motion in flight; clearing both covers either case.
         """
-        self._notify_capture(occupant)
+        self._notify_capture(occupant, at_ms)
         self._motions = [m for m in self._motions if m.piece is not occupant]
         self._cooldowns = [c for c in self._cooldowns if c.piece is not occupant]
 
@@ -450,19 +480,19 @@ class RealTimeArbiter:
             return (enter, "eat_settled", a, cell)
         return None
 
-    def _eat_settled(self, cell: Position) -> None:
+    def _eat_settled(self, cell: Position, at_ms: int) -> None:
         """Capture the settled piece on ``cell`` in passing; the mover keeps its
         motion and continues. Clears the victim's cooldown and settle record."""
         victim = self._board.remove(cell)
         self._settle_ms.pop(cell, None)
         if victim is not None:  # pragma: no branch  (a settled cell always holds its piece)
             self._cooldowns = [c for c in self._cooldowns if c.piece is not victim]
-            self._notify_capture(victim)  # ends the game too if it was a king
+            self._notify_capture(victim, at_ms)  # ends the game too if it was a king
 
-    def _eat(self, eaten: Motion) -> None:
+    def _eat(self, eaten: Motion, at_ms: int) -> None:
         """Remove an eaten piece (still on its origin) and drop its motion."""
         self._board.remove(eaten.source)
-        self._notify_capture(eaten.piece)  # ends the game too if it was a king
+        self._notify_capture(eaten.piece, at_ms)  # ends the game too if it was a king
         self._motions = [m for m in self._motions if m is not eaten]
 
     def _block(self, blocked: Motion, cell: Position, at_ms: int) -> None:
@@ -472,7 +502,7 @@ class RealTimeArbiter:
         self._board.remove(blocked.source)
         self._board.place(stop_cell, blocked.piece)
         self._settle_ms[stop_cell] = at_ms
-        self._begin_cooldown(blocked.piece, at_ms, self._cooldown_ms)
+        self._begin_cooldown(blocked.piece, stop_cell, at_ms, self._cooldown_ms)
         self._motions = [m for m in self._motions if m is not blocked]
 
     @staticmethod
@@ -487,31 +517,43 @@ class RealTimeArbiter:
 
     def _airborne_defender(
         self, cell: Position, arriver: Piece, arrival_ms: int
-    ) -> Optional[Piece]:
-        """An enemy jumper still airborne on ``cell`` when ``arriver`` reaches it."""
+    ) -> Optional[Jump]:
+        """The jump of an enemy still airborne on ``cell`` when ``arriver`` reaches it.
+
+        The jump rather than the piece, because whoever lands it needs the cell it is
+        standing on as well.
+        """
         for jump in self._jumps:
             if (
                 jump.cell == cell
                 and jump.piece.color != arriver.color
                 and arrival_ms <= jump.end_ms
             ):
-                return jump.piece
+                return jump
         return None
 
-    def _begin_cooldown(self, piece: Piece, now_ms: int, duration_ms: int) -> None:
-        """Put a just-landed piece on cooldown for ``duration_ms``.
+    def _begin_cooldown(
+        self, piece: Piece, cell: Position, now_ms: int, duration_ms: int
+    ) -> None:
+        """Put a just-landed piece on cooldown for ``duration_ms`` and announce it.
 
         The piece is marked ``COOLDOWN`` and freed back to ``IDLE`` by ``resolve``
         once the cooldown elapses. With ``duration_ms == 0`` the ready time equals
         ``now_ms``, so ``resolve`` frees it in the same pass — i.e. no cooldown.
+
+        Every way a piece can come to rest funnels through here — an arrival, a block
+        one cell short, a jump landing — so this is the single place ``on_settled`` is
+        raised from, and no path can settle a piece without observers hearing about it.
         """
         piece.state = PieceState.COOLDOWN
         self._cooldowns.append(
             Cooldown(piece, now_ms + duration_ms, now_ms, duration_ms)
         )
+        for observer in self._observers:
+            observer.on_settled(piece, cell, now_ms, duration_ms)
 
-    def _land(self, piece: Piece, now_ms: int) -> None:
+    def _land(self, jump: Jump, now_ms: int) -> None:
         """Land a jumping piece in place, dropping its jump and starting its (short)
         jump cooldown before it can act again."""
-        self._jumps = [j for j in self._jumps if j.piece is not piece]
-        self._begin_cooldown(piece, now_ms, self._jump_cooldown_ms)
+        self._jumps = [j for j in self._jumps if j is not jump]
+        self._begin_cooldown(jump.piece, jump.cell, now_ms, self._jump_cooldown_ms)

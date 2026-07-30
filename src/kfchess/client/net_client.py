@@ -1,4 +1,4 @@
-"""NetClient: the client's network half — connect, send commands, receive snapshots.
+"""NetClient: the client's network half — connect, send commands, receive the game.
 
 The windowed client's cv2 loop runs on the main thread and must never block on the
 network, so the socket lives on a background thread with its own asyncio loop. This
@@ -25,6 +25,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
+from kfchess.client.game_state import GAME_MESSAGES, ClientGameState, ServerClock
 from kfchess.model.color import Color
 from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
@@ -37,7 +38,6 @@ from kfchess.shared.protocol import (
     Play,
     Rejected,
     Seated,
-    State,
     Welcome,
     decode,
 )
@@ -77,11 +77,20 @@ class MatchResult:
 
 
 class NetClient:
-    """Thread-safe bridge between the cv2 main loop and the background WebSocket."""
+    """Thread-safe bridge between the cv2 main loop and the background WebSocket.
 
-    def __init__(self) -> None:
+    Game messages are folded into a :class:`~kfchess.client.game_state.ClientGameState`,
+    which is what :meth:`latest` reads a snapshot back out of; everything about *this
+    client's* place in the game — its colour, its rating, a refusal, a sound — is kept
+    here, where the two threads meet.
+    """
+
+    def __init__(self, clock: Optional[ServerClock] = None) -> None:
         self._lock = threading.Lock()
-        self._snapshot: Optional[GameSnapshot] = None
+        # The board, rebuilt from the deltas the server sends instead of received whole
+        # twenty times a second. ``clock`` is injectable so a test can freeze the
+        # interpolation the snapshot is read at.
+        self._state = ClientGameState(clock)
         self._color: Optional[Color] = None
         self._rating: Optional[int] = None
         self._room_id: Optional[str] = None
@@ -111,8 +120,8 @@ class NetClient:
         except ValueError:
             return
         with self._lock:
-            if isinstance(message, State):
-                self._snapshot = message.snapshot
+            if isinstance(message, GAME_MESSAGES):
+                self._state.apply(message)
             elif isinstance(message, Welcome):
                 self._color = message.color
                 self._rating = message.rating
@@ -196,9 +205,14 @@ class NetClient:
         return self._outgoing.get(timeout=timeout)
 
     def latest(self) -> Optional[GameSnapshot]:
-        """The most recent snapshot received, or ``None`` before the first arrives."""
+        """The game as of now, or ``None`` before the first full snapshot arrives.
+
+        Rebuilt on each call rather than stored, because "now" moves between calls: the
+        render loop asks once a frame, and that is what walks a piece across the board
+        between the two messages that announce its departure and its arrival.
+        """
         with self._lock:
-            return self._snapshot
+            return self._state.current()
 
     @property
     def color(self) -> Optional[Color]:

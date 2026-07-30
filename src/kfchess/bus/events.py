@@ -20,12 +20,31 @@ from kfchess.model.position import Position
 
 @dataclass(frozen=True)
 class MoveStarted:
-    """A piece has begun moving from ``source`` toward ``target``."""
+    """A piece has begun moving from ``source`` toward ``target``.
+
+    ``start_ms``/``arrival_ms`` are when it left and when it is due. Subscribers that
+    only care *that* a move happened (the log, the banner, sound) ignore them; the one
+    that puts the event on a wire needs them, because they are what lets the far side
+    draw the piece in flight without being sent the board.
+    """
 
     topic: ClassVar[str] = topics.MOVE_STARTED
     piece: Piece
     source: Position
     target: Position
+    start_ms: int = 0
+    arrival_ms: int = 0
+
+
+@dataclass(frozen=True)
+class Settled:
+    """``piece`` has come to rest on ``cell``, on cooldown for ``cooldown_ms``."""
+
+    topic: ClassVar[str] = topics.SETTLED
+    piece: Piece
+    cell: Position
+    at_ms: int = 0
+    cooldown_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -34,6 +53,16 @@ class Captured:
 
     topic: ClassVar[str] = topics.CAPTURE
     victim: Piece
+    at_ms: int = 0
+
+
+@dataclass(frozen=True)
+class CooldownDone:
+    """``piece``'s landing cooldown has elapsed; it may move again."""
+
+    topic: ClassVar[str] = topics.COOLDOWN_DONE
+    piece: Piece
+    at_ms: int = 0
 
 
 @dataclass(frozen=True)

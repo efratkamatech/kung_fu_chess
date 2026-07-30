@@ -13,17 +13,25 @@ from kfchess.model.position import Position
 class Spy(GameObserver):
     def __init__(self):
         self.moves = []
+        self.settles = []
         self.captures = []
-        self.game_overs = 0
+        self.cooldowns_done = []
+        self.winners = []
 
-    def on_move_started(self, piece, source, target):
-        self.moves.append((piece, source, target))
+    def on_move_started(self, piece, source, target, start_ms, arrival_ms):
+        self.moves.append((piece, source, target, start_ms, arrival_ms))
 
-    def on_capture(self, victim):
-        self.captures.append(victim)
+    def on_settled(self, piece, cell, at_ms, cooldown_ms):
+        self.settles.append((piece, cell, at_ms, cooldown_ms))
 
-    def on_game_over(self):
-        self.game_overs += 1
+    def on_capture(self, victim, at_ms):
+        self.captures.append((victim, at_ms))
+
+    def on_cooldown_done(self, piece, at_ms):
+        self.cooldowns_done.append((piece, at_ms))
+
+    def on_game_over(self, winner):
+        self.winners.append(winner)
 
 
 def rook_then_king():
@@ -43,11 +51,31 @@ def test_move_capture_and_game_over_reach_registered_observers():
 
     engine.request_move(Position(2, 0), Position(0, 0))  # white rook toward the king
     assert len(spy.moves) == 1                           # move-started fired
+    # A 2-cell move at MS_PER_CELL: announced as leaving at 0 and due at 2000, so a
+    # listener on the far side can place it on every frame in between.
+    assert spy.moves[0][3:] == (0, 2000)
 
     engine.wait(100000)                                  # rook arrives, captures the king
     assert len(spy.captures) == 1
-    assert spy.game_overs == 1
+    assert spy.captures[0][1] == 2000                    # stamped with the true arrival
+    assert spy.winners == [Color.WHITE]                  # the winner rides the event
     assert engine.winner is Color.WHITE
+
+
+def test_settling_and_the_end_of_a_cooldown_reach_observers():
+    """Every change to the board is announced — the two that used to be silent too."""
+    engine, _ = rook_then_king()
+    spy = Spy()
+    engine.add_observer(spy)
+    rook = engine.board.piece_at(Position(2, 0))
+
+    engine.request_move(Position(2, 0), Position(1, 0))  # 1 cell -> arrives at 1000
+    engine.wait(1000)
+    assert spy.settles == [(rook, Position(1, 0), 1000, 1000)]  # COOLDOWN_MS
+    assert spy.cooldowns_done == []                             # still cooling
+
+    engine.wait(1000)
+    assert spy.cooldowns_done == [(rook, 2000)]  # its own ready time, not the tick
 
 
 def test_cooldown_progress_reports_a_just_landed_piece():

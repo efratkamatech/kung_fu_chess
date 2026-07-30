@@ -81,6 +81,16 @@ class GameEngine:
         """The winning Color, or ``None`` while the game is still in progress."""
         return self._arbiter.winner
 
+    def next_event_ms(self) -> Optional[int]:
+        """The game time the arbiter next has something to do, or ``None`` if idle.
+
+        ``None`` once the game is over too: :meth:`wait` stops advancing anything then,
+        so there is nothing left to wake up for.
+        """
+        if self._arbiter.is_game_over:
+            return None
+        return self._arbiter.next_event_ms()
+
     def request_move(self, source: Position, target: Position) -> bool:
         """Start moving the piece at ``source`` to ``target`` if the move is legal.
 
@@ -93,9 +103,11 @@ class GameEngine:
         if not self._rule_engine.is_legal_move(self._board, source, target):
             return False
         piece = self._board.piece_at(source)
-        self._arbiter.start_motion(piece, source, target, self._clock.now_ms)
+        motion = self._arbiter.start_motion(piece, source, target, self._clock.now_ms)
         for observer in self._observers:
-            observer.on_move_started(piece, source, target)
+            observer.on_move_started(
+                piece, source, target, motion.start_ms, motion.arrival_ms
+            )
         return True
 
     def legal_targets(self, source: Position) -> List[Position]:

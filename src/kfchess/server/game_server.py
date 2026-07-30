@@ -11,6 +11,22 @@ like the cv2 I/O in ``img.py``.
 from __future__ import annotations
 
 
+def next_sleep_s(hub, ceiling_ms: int) -> float:
+    """How long the ticker may sleep before the lobby needs attention again.
+
+    Until the soonest moment any game has scheduled — a piece arriving, a cooldown
+    ending, a resign countdown reaching zero — but never longer than ``ceiling_ms``.
+
+    The ceiling is what keeps the *periodic* duties on their own clock: the ten-second
+    resync and the matchmaking timeouts count elapsed time rather than name a moment, so
+    they need the loop to come round regularly whether or not a game has anything to do.
+    Within that, this only ever pulls a wake-up *earlier*: a piece due in 10 ms is
+    announced in 10 ms, instead of at whatever fixed boundary comes next.
+    """
+    due_ms = hub.next_event_delay_ms()
+    return (ceiling_ms if due_ms is None else min(due_ms, ceiling_ms)) / 1000
+
+
 async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
     new_board,
     host=None,
@@ -22,10 +38,13 @@ async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
     ``new_board`` makes a fresh starting board for each game the lobby spins up. Each
     connection gets an outgoing asyncio queue that a drain task feeds to the socket, so
     the synchronous hub can "send" by simply enqueuing. A background ticker advances all
-    games and the matchmaking clock on a fixed interval. This is pure socket/timer
-    plumbing around the tested hub, hence excluded from coverage.
+    games and the matchmaking clock, waking on whichever comes first: the next event a
+    game has scheduled, or ``tick_ms``. This is pure socket/timer plumbing around the
+    tested hub, hence excluded from coverage — the two decisions it makes, how long to
+    sleep and how much time has passed, are :func:`next_sleep_s` and a subtraction.
     """
     import asyncio
+    import time
 
     import websockets
 
@@ -60,9 +79,16 @@ async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
             sender.cancel()
 
     async def ticker() -> None:
+        # The game is advanced by the time that actually passed, not by the interval we
+        # asked to sleep for: a loop that sleeps ~50 ms and always advances by exactly 50
+        # falls further behind the wall clock the busier the server gets, and every
+        # arrival time it hands out is wrong by the accumulated difference.
+        last = time.monotonic()
         while True:
-            await asyncio.sleep(tick_ms / 1000)
-            hub.tick(tick_ms)
+            await asyncio.sleep(next_sleep_s(hub, tick_ms))
+            now = time.monotonic()
+            hub.tick(round((now - last) * 1000))
+            last = now
 
     async with websockets.serve(
         handler,

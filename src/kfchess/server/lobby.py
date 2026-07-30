@@ -22,12 +22,12 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
+from kfchess.config import SNAPSHOT_RESYNC_MS
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
     CreateRoom,
-    Event,
     JoinRoom,
     Login,
     Move,
@@ -41,7 +41,7 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.server.matchmaker import Matchmaker
-from kfchess.server.room_manager import RoomManager
+from kfchess.server.room_manager import RoomIdUnavailable, RoomManager
 from kfchess.server.session import GameSession
 from kfchess.server.user_store import UserStore
 
@@ -64,22 +64,38 @@ class _Client:
 
 @dataclass
 class _LiveGame:
-    """One running game plus whether its result has already been rated (once)."""
+    """One running game, its rated-once flag, and how long since its last full snapshot.
+
+    The resync clock is per game rather than global so that a game started a moment ago
+    is not resynced immediately along with one that has been running for ten seconds.
+    """
 
     session: GameSession
     recorded: bool = False
+    since_resync_ms: int = 0
 
 
 class Lobby:
     """The synchronous hub: log players in, matchmake them, and route their moves."""
 
-    def __init__(self, new_board: NewBoard, users: UserStore) -> None:
+    def __init__(
+        self,
+        new_board: NewBoard,
+        users: UserStore,
+        rooms: Optional[RoomManager] = None,
+    ) -> None:
         self._new_board = new_board
         self._users = users
         self._matchmaker = Matchmaker()
-        self._rooms = RoomManager()
+        # Injected so a test can hand over an id generator with a known (or exhausted)
+        # sequence, rather than reach into the default one.
+        self._rooms = rooms if rooms is not None else RoomManager()
         self._clients: dict[int, _Client] = {}
         self._games: dict[int, _LiveGame] = {}
+        # Who is in each game, kept up to date as clients are seated and leave. It used
+        # to be recomputed by scanning every client on the server -- twice per game, per
+        # tick -- which is fine for two games and quadratic for ten thousand.
+        self._members_by_game: dict[int, set[int]] = {}
         self._next_client_id = 0
         self._next_game_id = 0
 
@@ -112,6 +128,8 @@ class Lobby:
         self._clients.pop(client_id, None)
         _log.info("client %d disconnected", client_id)
         if game_id is not None:
+            self._members_by_game[game_id].discard(client_id)
+            self._broadcast(game_id)  # tell the rest their opponent has dropped
             self._discard_if_empty(game_id)
 
     def _discard_if_empty(self, game_id: int) -> None:
@@ -121,8 +139,9 @@ class Lobby:
         at a game that no longer exists. A game kept alive for a disconnect countdown
         (its opponent is still watching) is not empty, so it survives until they leave too.
         """
-        if not self._members(game_id):
+        if not self._members_by_game[game_id]:
             del self._games[game_id]
+            del self._members_by_game[game_id]
             self._rooms.remove_game(game_id)
 
     # --- inbound messages ----------------------------------------------------
@@ -186,12 +205,13 @@ class Lobby:
         """Put a returning player back in their seat and cancel the resign countdown."""
         game_id, color = target
         client = self._clients[client_id]
-        client.session_id = game_id
         client.color = color
+        self._join(client_id, game_id)
         self._games[game_id].session.reconnect()
         _log.info("client %d reconnected to game %d as %s", client_id, game_id, color.value)
         self._send(client_id, Welcome(color, client.rating))  # colour set => skip the lobby
-        self._broadcast_state(game_id)  # board to the returner; countdown cleared for both
+        self._broadcast(game_id)      # the "countdown cancelled" delta, to everyone
+        self._broadcast_state(game_id)  # and the whole board, for the returner
 
     def _on_play(self, client_id: int) -> None:
         """Handle a "Play" request: try to matchmake this client, else queue it.
@@ -216,21 +236,32 @@ class Lobby:
         game_id = self._new_game()
         self._seat(white_id, game_id)  # first assign_color -> WHITE
         self._seat(black_id, game_id)  # second -> BLACK
-        self._broadcast_events(game_id)  # the queued "game started" sound
+        self._broadcast(game_id)       # the queued "game started" sound
         self._broadcast_state(game_id)
 
     def _on_create_room(self, client_id: int) -> None:
-        """Open a new private room; the creator plays white and gets its shareable id."""
+        """Open a new private room; the creator plays white and gets its shareable id.
+
+        If no free id can be found, the empty game is dropped again and the player is
+        told to try again — the one thing that must not happen is the server spinning on
+        the attempt, since a single thread runs every game on it.
+        """
         client = self._clients[client_id]
         if client.username is None or client.session_id is not None:
             return
         self._matchmaker.cancel(client_id)  # opening a room ends any pending search
         game_id = self._new_game()
-        room_id = self._rooms.create(game_id)
+        try:
+            room_id = self._rooms.create(game_id)
+        except RoomIdUnavailable:
+            _log.warning("client %d: no free room id, game %d dropped", client_id, game_id)
+            self._discard_if_empty(game_id)  # nobody was seated in it yet
+            self._send(client_id, Notice(NoticeReason.ROOM_UNAVAILABLE))
+            return
         self._games[game_id].session.set_room_id(room_id)
         _log.info("client %d opened room %s (game %d)", client_id, room_id, game_id)
         self._seat(client_id, game_id, room_id)  # assign_color -> WHITE
-        self._broadcast_events(game_id)
+        self._broadcast(game_id)
         self._broadcast_state(game_id)
 
     def _on_join_room(self, client_id: int, room_id: str) -> None:
@@ -246,7 +277,7 @@ class Lobby:
         self._matchmaker.cancel(client_id)
         _log.info("client %d joined room %s (game %d)", client_id, room_id, game_id)
         self._seat(client_id, game_id, room_id)  # BLACK, then None (a spectator)
-        self._broadcast_events(game_id)
+        self._broadcast(game_id)
         self._broadcast_state(game_id)
 
     def _new_game(self) -> int:
@@ -254,7 +285,13 @@ class Lobby:
         game_id = self._next_game_id
         self._next_game_id += 1
         self._games[game_id] = _LiveGame(GameSession(self._new_board()))
+        self._members_by_game[game_id] = set()
         return game_id
+
+    def _join(self, client_id: int, game_id: int) -> None:
+        """Record that a client is now in a game — the one place membership is set."""
+        self._clients[client_id].session_id = game_id
+        self._members_by_game[game_id].add(client_id)
 
     def _seat(self, client_id: int, game_id: int, room_id: Optional[str] = None) -> None:
         """Place a client in a game: next free colour, or spectator when both seats are taken.
@@ -265,7 +302,7 @@ class Lobby:
         game = self._games[game_id]
         client = self._clients[client_id]
         color = game.session.assign_color()  # WHITE, then BLACK, then None (spectator)
-        client.session_id = game_id
+        self._join(client_id, game_id)
         client.color = color
         if color is not None:
             game.session.set_name(color, client.username)
@@ -288,71 +325,115 @@ class Lobby:
             return
         _log.info("game %d: %s played %s", client.session_id, client.color.value, cmd)
         self._maybe_record_result(client.session_id)
-        self._broadcast_events(client.session_id)
-        self._broadcast_state(client.session_id)
+        self._broadcast(client.session_id)
 
     # --- time ----------------------------------------------------------------
 
     def tick(self, dt_ms: int) -> None:
         """Advance every game and the matchmaking clock by ``dt_ms``.
 
-        Each game resolves its arrivals, records a finished result once, and broadcasts
-        to its own members. Any matchmaking search that has now waited too long is told
-        no opponent was found (and has already been dropped from the queue).
+        Each game resolves its arrivals, records a finished result once, and sends its
+        own members whatever actually happened — usually nothing at all, since a tick
+        where no piece arrives and no cooldown ends produces no messages. Any matchmaking
+        search that has now waited too long is told no opponent was found (and has
+        already been dropped from the queue).
         """
         for game_id, game in self._games.items():
             game.session.tick(dt_ms)
             self._maybe_record_result(game_id)
-            self._broadcast_events(game_id)
-            self._broadcast_state(game_id)
+            self._broadcast(game_id)
+            self._resync_if_due(game_id, dt_ms)
         for client_id in self._matchmaker.tick(dt_ms):
             _log.info("client %d matchmaking timed out", client_id)
             self._send(client_id, Notice(NoticeReason.NO_OPPONENT))
 
+    def next_event_delay_ms(self) -> Optional[int]:
+        """The shortest wait before any game needs a tick, or ``None`` if all are idle.
+
+        Only the games' *scheduled* work is in here. The resync clock and the matchmaking
+        timeouts count elapsed time rather than name a moment, so they ride the caller's
+        own interval instead — see :func:`kfchess.server.game_server.next_sleep_s`, which
+        is the one place the two are combined.
+        """
+        delays = [
+            delay
+            for delay in (
+                game.session.next_event_delay_ms() for game in self._games.values()
+            )
+            if delay is not None
+        ]
+        return min(delays) if delays else None
+
     def _maybe_record_result(self, game_id: int) -> None:
-        """When a game has just ended, apply the ELO update once and show the new ratings.
+        """When a game has just ended, apply the ELO update once and store both ratings.
 
         A matchmade game always has two known players; a room game may not (a lone
         creator can capture the unowned enemy king), so a game that ends without two
-        known players is left unrated. Otherwise the winner is read off a snapshot, both
-        ratings are persisted, and they are written back for the next broadcast.
+        known players is left unrated.
+
+        The players have *already* been told their new ratings, in the ``GameOver`` delta
+        the session computed the moment the game ended. This persists the same numbers:
+        both sides run :func:`~kfchess.server.rating.updated_ratings` over the same pair,
+        so what was shown and what was stored are the same arithmetic, and nobody waits
+        on the database to see her result.
         """
         game = self._games[game_id]
         if game.recorded:
             return
-        snapshot = game.session.snapshot()
-        if snapshot.winner is None or len(snapshot.names) < 2:
+        winner = game.session.winner
+        if winner is None:
             return
+        winner_name = game.session.name_of(winner)
+        loser_name = game.session.name_of(winner.opponent)
+        if winner_name is None or loser_name is None:
+            return  # a seat was never filled; the game does not count
         game.recorded = True
-        winner, loser = snapshot.winner, snapshot.winner.opponent
-        self._users.record_win(snapshot.names[winner], snapshot.names[loser])
-        game.session.set_rating(winner, self._users.get_rating(snapshot.names[winner]))
-        game.session.set_rating(loser, self._users.get_rating(snapshot.names[loser]))
+        self._users.record_win(winner_name, loser_name)
+        game.session.set_rating(winner, self._users.get_rating(winner_name))
+        game.session.set_rating(winner.opponent, self._users.get_rating(loser_name))
 
     # --- broadcasting --------------------------------------------------------
 
     def _members(self, game_id: int) -> List[_Client]:
         """The clients currently seated in (or watching) one game."""
-        return [c for c in self._clients.values() if c.session_id == game_id]
+        return [self._clients[cid] for cid in self._members_by_game[game_id]]
+
+    def _broadcast(self, game_id: int) -> None:
+        """Send everything the game has queued — deltas and sounds — to its members.
+
+        The common case is an empty queue: most ticks nothing happens, and a game with
+        nothing to say now says nothing, where it used to send every client a fresh copy
+        of the whole board.
+        """
+        members = self._members(game_id)
+        for message in self._games[game_id].session.drain_deltas():
+            text = encode(message)
+            for client in members:
+                client.send(text)
 
     def _broadcast_state(self, game_id: int) -> None:
-        """Send the game's current snapshot to each of its members."""
+        """Send the game's full snapshot to each of its members.
+
+        Reserved for the moments a whole picture is genuinely needed: someone was just
+        seated (and everyone's view of who is playing changed), someone reconnected, or
+        the periodic resync came due.
+        """
         text = encode(State(self._games[game_id].session.snapshot()))
         for client in self._members(game_id):
             client.send(text)
 
-    def _broadcast_events(self, game_id: int) -> None:
-        """Send each queued sound-kind event to the game's members, before its state.
+    def _resync_if_due(self, game_id: int, dt_ms: int) -> None:
+        """Send a full snapshot every ``SNAPSHOT_RESYNC_MS``, to correct any drift.
 
-        A game always has at least one member when this runs — it is only called right
-        after seating someone or on a move, and empty games are discarded on disconnect —
-        so the game-start sound is never drained into the void.
+        The clients rebuild the board from deltas, and arithmetic on two machines can
+        part company — a dropped frame, a rounding difference. This is the floor under
+        that: whatever a client believes, it is corrected within ten seconds.
         """
-        members = self._members(game_id)
-        for kind in self._games[game_id].session.drain_events():
-            text = encode(Event(kind))
-            for client in members:
-                client.send(text)
+        game = self._games[game_id]
+        game.since_resync_ms += dt_ms
+        if game.since_resync_ms >= SNAPSHOT_RESYNC_MS:
+            game.since_resync_ms = 0
+            self._broadcast_state(game_id)
 
     def _send(self, client_id: int, message) -> None:
         """Encode and push one message to a single (known) client."""

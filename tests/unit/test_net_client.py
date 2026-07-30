@@ -1,5 +1,6 @@
 """Tests for NetClient's synchronous bridge logic (no sockets, no threads)."""
 
+from kfchess.client.game_state import ServerClock
 from kfchess.client.net_client import MatchResult, NetClient
 from kfchess.model.color import Color
 from kfchess.shared.protocol import (
@@ -45,15 +46,25 @@ def test_starts_empty():
     assert client.next_event() is None
 
 
+def stopped_client():
+    """A client whose clock never advances, so ``latest()`` reads exact numbers.
+
+    The snapshot is rebuilt from the deltas at whatever time it is asked for (see
+    :class:`~kfchess.client.game_state.ClientGameState`), so a test that compares one
+    field-for-field has to hold the clock still first.
+    """
+    return NetClient(ServerClock(lambda: 0))
+
+
 def test_a_state_message_becomes_the_latest_snapshot():
-    client = NetClient()
+    client = stopped_client()
     snapshot = a_snapshot(now_ms=42)
     client.handle(encode(State(snapshot)))
     assert client.latest() == snapshot
 
 
 def test_a_later_state_replaces_the_earlier_one():
-    client = NetClient()
+    client = stopped_client()
     client.handle(encode(State(a_snapshot(now_ms=1))))
     client.handle(encode(State(a_snapshot(now_ms=2))))
     assert client.latest().now_ms == 2

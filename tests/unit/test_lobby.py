@@ -8,6 +8,7 @@ is the standard way to get a running game.
 import asyncio
 
 from kfchess.config import (
+    MS_PER_CELL,
     SOUND_CAPTURE,
     SOUND_GAME_OVER,
     SOUND_GAME_START,
@@ -20,12 +21,16 @@ from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.shared.protocol import (
     CreateRoom,
+    Disconnected,
     Event,
+    GameOver,
     JoinRoom,
     Login,
     Move,
+    MoveStarted,
     Notice,
     Play,
+    Reconnected,
     Rejected,
     Seated,
     State,
@@ -35,6 +40,7 @@ from kfchess.shared.protocol import (
 )
 from kfchess.server.game_server import serve
 from kfchess.server.lobby import Lobby
+from kfchess.server.room_manager import RoomManager
 from kfchess.server.user_store import UserStore
 from kfchess.shared.codes import NoticeReason, RejectReason
 
@@ -214,14 +220,17 @@ def test_a_move_before_being_in_a_game_is_rejected():
     assert client.received[-1] == Rejected(RejectReason.NOT_A_PLAYER)
 
 
-def test_a_legal_move_broadcasts_an_event_and_state_to_both_players():
+def test_a_legal_move_broadcasts_its_sound_and_delta_to_both_players():
+    """Two small messages describing the move — not a fresh copy of the board."""
     hub, white, black, wid, _ = seat_two()
     before = len(black.received)
 
     hub.receive(wid, encode(Move("WRa1a3")))
 
-    assert black.received[-2] == Event(SOUND_MOVE)
-    assert isinstance(black.received[-1], State)
+    assert black.received[-2:] == [
+        Event(SOUND_MOVE),
+        MoveStarted(0, "wR", "a1", "a3", 0, 2000),
+    ]
     assert len(black.received) == before + 2
 
 
@@ -249,9 +258,21 @@ def test_two_games_run_in_parallel_without_crossing_broadcasts():
     before_c, before_d = len(c.received), len(d.received)
     hub.receive(ids[0], encode(Move("WRa1a3")))  # a move in game one
 
-    assert isinstance(a.received[-1], State) and isinstance(b.received[-1], State)
+    assert isinstance(a.received[-1], MoveStarted)
+    assert isinstance(b.received[-1], MoveStarted)
     assert len(c.received) == before_c  # game two saw nothing
     assert len(d.received) == before_d
+
+
+def test_a_quiet_tick_sends_nobody_anything():
+    """What S0 buys, measured at the hub: an idle game costs no traffic at all."""
+    hub, white, black, _, _ = seat_two()
+    before_white, before_black = len(white.received), len(black.received)
+
+    hub.tick(50)
+
+    assert len(white.received) == before_white
+    assert len(black.received) == before_black
 
 
 # --- housekeeping -------------------------------------------------------------
@@ -287,16 +308,16 @@ def test_disconnecting_a_waiting_seeker_removes_them_from_the_queue():
 
 # --- disconnect -> auto-resign ------------------------------------------------
 
-def test_a_disconnect_mid_game_shows_the_opponent_a_resign_countdown():
+def test_a_disconnect_mid_game_tells_the_opponent_the_resign_deadline():
+    """Once, with the deadline — not a countdown re-sent twenty times a second."""
     from kfchess.config import RESIGN_COUNTDOWN_MS
 
     hub, white, _, _, bid = seat_two()
     hub.disconnect(bid)   # black drops
-    hub.tick(10)          # the countdown, and who is missing, ride the next broadcast
 
-    snapshot = of_type(white, State)[-1].snapshot
-    assert snapshot.disconnected is Color.BLACK
-    assert snapshot.resign_ms == RESIGN_COUNTDOWN_MS - 10
+    assert of_type(white, Disconnected) == [
+        Disconnected(Color.BLACK, RESIGN_COUNTDOWN_MS)
+    ]
 
 
 def test_a_player_who_never_returns_auto_resigns_and_the_opponent_wins():
@@ -332,11 +353,31 @@ def test_a_finished_game_updates_both_ratings_once_and_shows_them():
 
     assert hub._users.get_rating("Efrat") == 1216  # winner up
     assert hub._users.get_rating("Dan") == 1184     # loser down
-    snapshot = of_type(white, State)[-1].snapshot
-    assert snapshot.ratings == {Color.WHITE: 1216, Color.BLACK: 1184}
+    # The player does not wait on the database to see her new number: the same pair
+    # rides the game-over delta, computed by the session as the king fell.
+    assert of_type(white, GameOver)[-1].ratings == {
+        Color.WHITE: 1216,
+        Color.BLACK: 1184,
+    }
 
     hub.tick(100000)  # a further tick must not apply the update a second time
     assert hub._users.get_rating("Efrat") == 1216
+
+
+# --- resync -------------------------------------------------------------------
+
+def test_a_full_snapshot_is_resent_on_the_resync_interval():
+    """The floor under the deltas: whatever a client believes, it is corrected."""
+    from kfchess.config import SNAPSHOT_RESYNC_MS
+
+    hub, white, _, _, _ = seat_two()
+    before = len(of_type(white, State))
+
+    hub.tick(SNAPSHOT_RESYNC_MS - 1)
+    assert len(of_type(white, State)) == before  # not due yet
+
+    hub.tick(1)
+    assert len(of_type(white, State)) == before + 1
 
 
 # --- rooms and spectators (M6) ------------------------------------------------
@@ -397,7 +438,7 @@ def test_a_spectator_still_sees_the_game_state():
     before = len(watcher.received)
 
     hub.receive(cid, encode(Move("WRa1a3")))  # white plays
-    assert isinstance(watcher.received[-1], State)  # the watcher was broadcast to
+    assert isinstance(watcher.received[-1], MoveStarted)  # the watcher was broadcast to
     assert len(watcher.received) > before
 
 
@@ -451,10 +492,10 @@ def test_reconnecting_clears_the_opponents_countdown():
     hub, white, black, wid, bid = seat_two()
     hub.disconnect(bid)
     hub.tick(5000)  # the opponent has been watching the countdown
-    assert of_type(white, State)[-1].snapshot.disconnected is Color.BLACK
+    assert of_type(white, Reconnected) == []
 
     login(hub, hub.connect(FakeClient().send), "Dan")
-    assert of_type(white, State)[-1].snapshot.disconnected is None  # countdown cleared
+    assert of_type(white, Reconnected) == [Reconnected()]  # countdown cancelled
 
 
 def test_a_reconnected_player_can_move_again():
@@ -466,7 +507,7 @@ def test_a_reconnected_player_can_move_again():
 
     hub.receive(rid, encode(Move("WRa1a3")))  # the white rook, now that we are back
     assert of_type(returner, Rejected) == []                 # accepted
-    assert len(of_type(returner, State)[-1].snapshot.moving) == 1  # rook in flight
+    assert of_type(returner, MoveStarted) == [MoveStarted(0, "wR", "a1", "a3", 0, 2000)]
 
 
 def test_a_brand_new_user_logs_into_the_lobby_not_a_game():
@@ -531,3 +572,66 @@ def test_discarding_a_room_game_also_forgets_its_room():
 
 def test_serve_is_an_async_entry_point():
     assert asyncio.iscoroutinefunction(serve)
+
+
+# --- scheduling: when does the lobby next need a tick? -------------------------
+
+def test_a_lobby_with_no_games_has_nothing_scheduled():
+    assert make_lobby().next_event_delay_ms() is None
+
+
+def test_the_lobby_reports_the_soonest_event_across_its_games():
+    hub, _, _, wid, _ = seat_two()
+    assert hub.next_event_delay_ms() is None  # a fresh game with nobody moving
+
+    hub.receive(wid, encode(Move("WRa1a3")))  # arrives in two seconds
+    assert hub.next_event_delay_ms() == 2 * MS_PER_CELL
+
+    hub.tick(1_500)
+    assert hub.next_event_delay_ms() == 500
+
+
+def test_a_second_busier_game_pulls_the_wake_up_earlier():
+    hub, _, _, wid, _ = seat_two()
+    hub.receive(wid, encode(Move("WRa1a3")))  # game 0: 2,000 ms out
+    hub.tick(1_800)                           # ...now 200 ms out
+    other_w, other_b = FakeClient(), FakeClient()
+    ow, ob = hub.connect(other_w.send), hub.connect(other_b.send)
+    login(hub, ow, "Sam")
+    login(hub, ob, "Noa")
+    hub.receive(ow, encode(Play()))
+    hub.receive(ob, encode(Play()))
+    hub.receive(ow, encode(Move("WRa1a3")))   # game 1: 2,000 ms out
+
+    assert hub.next_event_delay_ms() == 200   # the one that is closest wins
+
+
+# --- rooms: the id space running out ------------------------------------------
+
+def test_a_room_that_cannot_get_an_id_is_refused_instead_of_hanging():
+    hub = Lobby(_rook_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
+    first, first_id = login_ready(hub, "Efrat")
+    hub.receive(first_id, encode(CreateRoom()))  # takes the only id there is
+    assert of_type(first, Seated)[-1].room_id == "AAAAAA"
+
+    second, second_id = login_ready(hub, "Dan")
+    hub.receive(second_id, encode(CreateRoom()))
+
+    assert second.received[-1] == Notice(NoticeReason.ROOM_UNAVAILABLE)
+    assert of_type(second, Seated) == []  # and it was not seated in a half-made game
+
+
+def test_a_refused_room_leaves_the_player_free_to_do_something_else():
+    """The half-made game is dropped, so the player is still in the lobby, not stuck."""
+    hub = Lobby(_rook_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
+    _, first_id = login_ready(hub, "Efrat")
+    hub.receive(first_id, encode(CreateRoom()))  # takes the only id there is
+    refused, refused_id = login_ready(hub, "Dan")
+    hub.receive(refused_id, encode(CreateRoom()))  # refused
+
+    other, other_id = login_ready(hub, "Sam")
+    hub.receive(refused_id, encode(Play()))
+    hub.receive(other_id, encode(Play()))
+
+    assert of_type(refused, Seated)[-1] == Seated(Color.WHITE)  # matched normally
+    assert of_type(other, Seated)[-1] == Seated(Color.BLACK)

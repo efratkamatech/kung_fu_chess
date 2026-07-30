@@ -79,6 +79,7 @@ def error_message(code: str) -> str:
 # On-disk locations of the image assets, resolved relative to this file so the app
 # runs from any working directory. The text/VPL path never touches these, so their
 # absence on the grader (which uploads only main.py + src/) is harmless.
+import os  # noqa: E402  (for the few settings that come from the environment)
 from pathlib import Path  # noqa: E402  (kept near the paths it supports)
 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
@@ -128,11 +129,20 @@ GAMEOVER_TEXT_COLOR = (255, 255, 255)
 STARTBANNER_ALPHA = 0.35
 
 # --- Networking (the WebSocket server) ---------------------------------------
-SERVER_HOST = "localhost"
+# The interface the server binds. "localhost" keeps a run on a laptop private, which is
+# the right default; a container has to bind 0.0.0.0 or nothing outside it can connect,
+# so `docker-compose.yml` sets this. It is read from the environment because it is a
+# property of *where the process runs*, not of the game.
+SERVER_HOST = os.environ.get("KFC_SERVER_HOST", "localhost")
 SERVER_PORT = 8765
-# How often the server advances the game and broadcasts a fresh snapshot. ~20/sec
-# keeps in-flight motion looking smooth on the clients.
+# How often the server advances the game. ~20/sec keeps in-flight motion smooth, and
+# it is the *ceiling* on how long the tick loop sleeps: a game with an event due sooner
+# is woken for it, an idle game waits out the whole interval.
 SERVER_TICK_MS = 50
+# On top of the per-event deltas, every client is sent a full snapshot this often to
+# correct any drift. Lower = more traffic, faster self-correction after a lost frame.
+# This is the one periodic broadcast left; everything else is sent only when it happens.
+SNAPSHOT_RESYNC_MS = 10_000
 # Transport keepalive (liveness): the server sends a WebSocket ping this often and drops
 # a connection that does not pong within the timeout. This is what notices a *silently*
 # dropped client — a network that vanished without a close frame — and it fires the same
@@ -142,10 +152,14 @@ SERVER_TICK_MS = 50
 WS_PING_INTERVAL_S = 10
 WS_PING_TIMEOUT_S = 10
 
-# --- Accounts and rating (server-side, persisted in SQLite) ------------------
+# --- Accounts and rating (server-side) ---------------------------------------
 # Where the users database lives (username, password hash, rating). Resolved at the
 # repo root so it survives across server runs. (git-ignored; not game art.)
 USERS_DB = ASSETS_DIR.parent / "users.db"
+# A ``postgresql://`` DSN takes over when it is set: that is how the container is
+# pointed at its database. Unset — a laptop, and every test — falls back to the SQLite
+# file above, so nothing about a local run changes.
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 START_RATING = 1200   # every new account starts here
 ELO_K = 32            # the ELO K-factor: the most a single game can move a rating
 
@@ -160,6 +174,18 @@ MATCH_TIMEOUT_MS = 60_000
 # When a player's socket drops mid-game, the opponent sees a countdown for this long;
 # if they have not reconnected by the end, they auto-resign and the opponent wins.
 RESIGN_COUNTDOWN_MS = 20_000
+
+# --- Rooms (M6) --------------------------------------------------------------
+# Crockford base32: the digits and uppercase letters with O, I, L and U removed, so an
+# id read aloud or typed off a screenshot cannot be mistaken (no 0/O, no 1/I/L). Six
+# characters give ~1.07e9 ids, comfortably more than the rooms that can be live at once.
+ROOM_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+ROOM_ID_LENGTH = 6
+# How many times to redraw an id that is already taken before giving up. A collision is
+# already vanishingly unlikely; this is the guard that turns "somehow, always taken"
+# into a refusal the player sees, instead of a loop that spins for ever holding the
+# server's only thread.
+ROOM_ID_MAX_ATTEMPTS = 10
 
 # --- Logging (M6) ------------------------------------------------------------
 # Where the server and client write their activity logs (git-ignored; not game art).

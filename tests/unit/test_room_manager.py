@@ -1,6 +1,9 @@
 """Tests for RoomManager: unique room ids mapped to games."""
 
-from kfchess.server.room_manager import RoomManager
+import pytest
+
+from kfchess.config import ROOM_ID_ALPHABET, ROOM_ID_LENGTH, ROOM_ID_MAX_ATTEMPTS
+from kfchess.server.room_manager import RoomIdUnavailable, RoomManager
 
 
 def sequence(*ids):
@@ -28,11 +31,28 @@ def test_create_regenerates_the_id_on_a_collision():
     assert rooms.game_for("BBBB") == 2
 
 
-def test_the_default_id_is_four_uppercase_hex_characters():
+def test_the_default_id_is_read_aloud_safe():
     room_id = RoomManager().create(1)
-    assert len(room_id) == 4
-    assert room_id == room_id.upper()
-    assert all(c in "0123456789ABCDEF" for c in room_id)
+    assert len(room_id) == ROOM_ID_LENGTH
+    assert all(c in ROOM_ID_ALPHABET for c in room_id)
+    # The characters a player could confuse when copying an id off a screen are out.
+    assert not set(room_id) & set("OILU")
+
+
+def test_create_gives_up_rather_than_spinning_for_ever():
+    """The hang fix: an id space that never yields a free id must end the attempt."""
+    attempts = []
+
+    def always_the_same():
+        attempts.append("AAAAAA")
+        return "AAAAAA"
+
+    rooms = RoomManager(generate_id=always_the_same)
+    assert rooms.create(1) == "AAAAAA"          # the first one is free
+    with pytest.raises(RoomIdUnavailable):
+        rooms.create(2)                          # every later one collides
+    assert len(attempts) == 1 + ROOM_ID_MAX_ATTEMPTS
+    assert rooms.game_for("AAAAAA") == 1         # and the first room is untouched
 
 
 def test_remove_game_forgets_its_room():
@@ -49,6 +69,15 @@ def test_remove_game_leaves_other_rooms_untouched():
     rooms.remove_game(7)
     assert rooms.game_for("AAAA") is None
     assert rooms.game_for("BBBB") == 8  # a different game's room survives
+
+
+def test_a_removed_id_can_be_handed_out_again():
+    """Removal drops both directions, so the id is genuinely free afterwards."""
+    rooms = RoomManager(generate_id=sequence("AAAA", "AAAA"))
+    rooms.create(7)
+    rooms.remove_game(7)
+    assert rooms.create(8) == "AAAA"  # no collision: the old mapping is really gone
+    assert rooms.game_for("AAAA") == 8
 
 
 def test_remove_game_is_a_no_op_for_an_unknown_game():

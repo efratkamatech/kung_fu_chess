@@ -1,6 +1,8 @@
 """Tests for GameSession: colour assignment, move handling, and snapshots."""
 
 from kfchess.config import (
+    COOLDOWN_MS,
+    MS_PER_CELL,
     RESIGN_COUNTDOWN_MS,
     SOUND_CAPTURE,
     SOUND_GAME_OVER,
@@ -12,6 +14,16 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.server.session import GameSession
+from kfchess.shared.protocol import (
+    Captured,
+    CooldownDone,
+    Disconnected,
+    Event,
+    GameOver,
+    MoveStarted,
+    Reconnected,
+    Settled,
+)
 from kfchess.shared.snapshot import CellView
 
 
@@ -128,7 +140,7 @@ def test_a_fresh_snapshot_shows_the_start_phase_and_the_pieces():
     snapshot = rook_session().snapshot()
     assert snapshot.phase == "start"
     assert snapshot.winner is None
-    assert snapshot.cells[2][0] == CellView("wR", "IDLE", 0.0)
+    assert snapshot.cells[2][0] == CellView("wR", "IDLE", 0.0, piece_id=0)
     assert snapshot.moving == []
 
 
@@ -152,40 +164,85 @@ def test_capturing_the_king_is_reflected_in_the_snapshot():
     assert "x bK" in snapshot.logs[Color.WHITE]
 
 
-# --- immediate-reaction events (sound) ----------------------------------------
+# --- deltas: what actually happened, instead of a picture of everything -------
 
 def test_game_started_is_queued_as_soon_as_the_session_is_built():
     session = rook_session()
-    assert session.drain_events() == [SOUND_GAME_START]
+    assert session.drain_deltas() == [Event(SOUND_GAME_START)]
 
 
-def test_drain_events_clears_the_queue():
+def test_draining_clears_the_queue():
     session = rook_session()
-    session.drain_events()
-    assert session.drain_events() == []  # nothing left the second time
+    session.drain_deltas()
+    assert session.drain_deltas() == []  # nothing left the second time
 
 
-def test_a_move_queues_a_move_sound():
+def test_a_move_queues_its_sound_and_a_move_started_delta():
+    """A 2-cell move on a 3-row board: leaves a1 at 0, due at a3 at 2 x MS_PER_CELL."""
     session = rook_session()
-    session.drain_events()  # clear the initial game-start event
+    session.drain_deltas()  # clear the initial game-start event
     session.apply_command(Color.WHITE, "WRa1a3")
-    assert session.drain_events() == [SOUND_MOVE]
+    assert session.drain_deltas() == [
+        Event(SOUND_MOVE),
+        MoveStarted(0, "wR", "a1", "a3", 0, 2000),
+    ]
 
 
-def test_an_illegal_move_queues_no_event():
+def test_an_illegal_move_queues_nothing():
     session = rook_session()
-    session.drain_events()
+    session.drain_deltas()
     session.apply_command(Color.WHITE, "WRa1b2")  # rejected: illegal
-    assert session.drain_events() == []
+    assert session.drain_deltas() == []
 
 
-def test_capturing_the_king_queues_capture_then_game_over():
-    session = king_session()
-    session.drain_events()  # clear the initial game-start event
+def test_a_quiet_tick_queues_nothing():
+    """The saving, in one test: time passing is not news, so it costs no traffic."""
+    session = rook_session()
+    session.drain_deltas()
+    session.tick(50)
+    assert session.drain_deltas() == []
+
+
+def test_arriving_queues_a_settled_then_the_end_of_its_cooldown():
+    session = rook_session()
     session.apply_command(Color.WHITE, "WRa1a3")
-    session.drain_events()  # clear the move event
-    session.tick(100000)    # rook arrives and captures the king
-    assert session.drain_events() == [SOUND_CAPTURE, SOUND_GAME_OVER]
+    session.drain_deltas()
+
+    session.tick(2000)  # the rook arrives
+    assert session.drain_deltas() == [Settled(0, "wR", "a3", 2000, COOLDOWN_MS)]
+
+    session.tick(COOLDOWN_MS)  # and is free again
+    assert session.drain_deltas() == [CooldownDone(0, 2000 + COOLDOWN_MS)]
+
+
+def test_capturing_the_king_queues_the_capture_then_the_result():
+    session = king_session()
+    session.set_rating(Color.WHITE, 1200)
+    session.set_rating(Color.BLACK, 1200)
+    session.apply_command(Color.WHITE, "WRa1a3")
+    session.drain_deltas()  # clear the game-start and move deltas
+
+    session.tick(2000)  # the rook arrives and captures the king
+
+    assert session.drain_deltas() == [
+        Event(SOUND_CAPTURE),
+        Captured(1, "bK", 2000),
+        Event(SOUND_GAME_OVER),
+        # Evenly matched, so the win is worth half the K-factor either way.
+        GameOver(Color.WHITE, 2000, {Color.WHITE: 1216, Color.BLACK: 1184}),
+        Settled(0, "wR", "a3", 2000, COOLDOWN_MS),
+    ]
+
+
+def test_a_game_with_an_unfilled_seat_ends_unrated():
+    """A lone room creator can capture the unowned king; that game does not count."""
+    session = king_session()
+    session.set_rating(Color.WHITE, 1200)  # black never joined
+    session.apply_command(Color.WHITE, "WRa1a3")
+    session.tick(2000)
+
+    over = [m for m in session.drain_deltas() if isinstance(m, GameOver)]
+    assert over == [GameOver(Color.WHITE, 2000, {})]
 
 
 # --- disconnect and auto-resign (M5) -----------------------------------------
@@ -207,7 +264,7 @@ def test_ticking_runs_the_resign_countdown_down():
 
 def test_the_countdown_expiring_resigns_the_missing_player():
     session = rook_session()
-    session.drain_events()  # clear the initial game-start event
+    session.drain_deltas()  # clear the initial game-start event
     session.mark_disconnected(Color.BLACK)
     session.tick(RESIGN_COUNTDOWN_MS)
     snapshot = session.snapshot()
@@ -215,7 +272,20 @@ def test_the_countdown_expiring_resigns_the_missing_player():
     assert snapshot.phase == "over"
     assert snapshot.disconnected is None    # the countdown is cleared
     assert snapshot.resign_ms == 0
-    assert session.drain_events() == [SOUND_GAME_OVER]
+    assert session.drain_deltas() == [
+        # The deadline is announced once, not re-sent as a countdown every tick.
+        Disconnected(Color.BLACK, RESIGN_COUNTDOWN_MS),
+        Event(SOUND_GAME_OVER),
+        GameOver(Color.WHITE, 0, {}),
+    ]
+
+
+def test_reconnecting_queues_the_cancellation():
+    session = rook_session()
+    session.mark_disconnected(Color.BLACK)
+    session.drain_deltas()
+    session.reconnect()
+    assert session.drain_deltas() == [Reconnected()]
 
 
 def test_no_move_is_accepted_after_a_resign():
@@ -256,3 +326,51 @@ def test_disconnected_color_and_name_expose_the_missing_seat():
     assert session.disconnected_color() is Color.BLACK
     assert session.name_of(Color.BLACK) == "Dan"
     assert session.name_of(Color.WHITE) is None  # nobody logged into that seat
+
+
+# --- when the game next needs a tick -----------------------------------------
+
+def test_an_idle_game_has_nothing_scheduled():
+    assert rook_session().next_event_delay_ms() is None
+
+
+def test_a_move_in_flight_schedules_its_arrival():
+    session = rook_session()
+    session.apply_command(Color.WHITE, "WRa1a3")   # two cells
+    assert session.next_event_delay_ms() == 2 * MS_PER_CELL
+
+    session.tick(500)
+    assert session.next_event_delay_ms() == 2 * MS_PER_CELL - 500  # a delay, not a moment
+
+
+def test_a_landed_piece_schedules_the_end_of_its_cooldown():
+    session = rook_session()
+    session.apply_command(Color.WHITE, "WRa1a3")
+    session.tick(2 * MS_PER_CELL)
+    assert session.next_event_delay_ms() == COOLDOWN_MS
+
+
+def test_a_missing_player_schedules_their_auto_resign():
+    session = rook_session()
+    session.assign_color()
+    session.mark_disconnected(Color.WHITE)
+    assert session.next_event_delay_ms() == RESIGN_COUNTDOWN_MS
+
+    session.tick(RESIGN_COUNTDOWN_MS // 2)
+    assert session.next_event_delay_ms() == RESIGN_COUNTDOWN_MS // 2
+
+
+def test_the_sooner_of_the_board_and_the_countdown_wins():
+    session = rook_session()
+    session.assign_color()
+    session.apply_command(Color.WHITE, "WRa1a3")   # arrives in 2,000 ms
+    session.mark_disconnected(Color.BLACK)        # resigns in 20,000 ms
+    assert session.next_event_delay_ms() == 2 * MS_PER_CELL
+
+
+def test_a_finished_game_is_never_woken_again():
+    session = king_session()
+    session.apply_command(Color.WHITE, "WRa1a3")
+    session.tick(2 * MS_PER_CELL)
+    assert session.is_over()
+    assert session.next_event_delay_ms() is None

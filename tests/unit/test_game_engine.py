@@ -181,3 +181,23 @@ def test_no_jump_after_game_over():
     engine.wait(2000)                                    # -> game over
     engine.request_jump(Position(1, 0))                  # ignored
     assert black_rook.state is PieceState.IDLE
+
+
+def test_next_event_ms_reports_when_the_arbiter_is_next_due():
+    engine = make_engine(rook_board())
+    assert engine.next_event_ms() is None  # nothing has been asked of it yet
+
+    engine.request_move(Position(0, 0), Position(2, 0))
+    assert engine.next_event_ms() == 2 * MS_PER_CELL
+
+
+def test_next_event_ms_is_none_once_the_game_is_over():
+    board = Board(3, 3)
+    board.place(Position(0, 0), Piece(PieceType("R", "rook"), Color.WHITE))
+    board.place(Position(2, 0), Piece(PieceType("K", "king", is_king=True), Color.BLACK))
+    engine = make_engine(board)
+    engine.request_move(Position(0, 0), Position(2, 0))
+    engine.wait(2 * MS_PER_CELL)  # the king falls
+
+    assert engine.is_game_over
+    assert engine.next_event_ms() is None  # wait() does nothing now; nothing to wake for

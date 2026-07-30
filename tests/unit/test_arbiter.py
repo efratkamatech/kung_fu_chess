@@ -423,3 +423,35 @@ def test_airborne_defender_only_matches_its_own_cell():
     arbiter.resolve(1000)  # attacker's cell differs from the jump cell -> normal move
     assert board.piece_at(Position(0, 0)) is attacker
     assert board.piece_at(Position(0, 2)) is jumper  # jumper landed, untouched
+
+
+def test_next_event_ms_is_none_when_nothing_is_pending():
+    assert make_arbiter(board_with_rook()).next_event_ms() is None
+
+
+def test_next_event_ms_reports_the_earliest_arrival():
+    board = Board(1, 3)
+    board.place(Position(0, 0), rook())
+    board.place(Position(0, 2), rook())
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(board.piece_at(Position(0, 0)), Position(0, 0), Position(0, 1), 0)
+    arbiter.start_motion(board.piece_at(Position(0, 2)), Position(0, 2), Position(0, 1), 500)
+
+    assert arbiter.next_event_ms() == 1000  # the first motion lands before the second
+
+
+def test_next_event_ms_falls_back_to_a_cooldown_expiring():
+    board = board_with_rook()
+    arbiter = make_arbiter(board)
+    arbiter.start_motion(board.piece_at(Position(0, 0)), Position(0, 0), Position(0, 1), 0)
+    arbiter.resolve(1000)  # it lands, and starts cooling down
+
+    assert arbiter.next_event_ms() == 1000 + COOLDOWN_MS
+
+
+def test_next_event_ms_counts_a_jump_still_in_the_air():
+    board = board_with_rook()
+    arbiter = make_arbiter(board)
+    arbiter.start_jump(board.piece_at(Position(0, 0)), Position(0, 0), 200)
+
+    assert arbiter.next_event_ms() == 200 + JUMP_DURATION_MS

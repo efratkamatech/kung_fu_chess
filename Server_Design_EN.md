@@ -517,6 +517,19 @@ Note that after the fix, the **resync** (215 B/s) is larger than the events them
 (110 B/s). Pushing resync to 30 seconds gives ~1.5 kbps and ~15 Gbps — there is more
 headroom if we need it.
 
+**Measured, after S0** (a 30-second game through the real `Lobby`, both sides moving
+every two seconds — so twice the event rate assumed above):
+
+| | Estimated | Measured |
+|---|---|---|
+| Full snapshot | 2,148 B | **2,650 B** (`piece_id` now rides each cell) |
+| Per client | ~325 B/s | **537 B/s** (4.3 kbps) |
+| Improvement over 20 Hz snapshots | ×135 | **×98.8** |
+
+The gap is the event rate, not the protocol: at the design's one-move-per-two-seconds
+this lands within a few percent of the estimate. The shape of the result holds — the
+resync is still the larger half of the bill (265 B/s of the 537).
+
 #### Bonus: the same idea cuts CPU
 
 `Lobby.tick()` runs 20 ticks per second per game **even when nothing is happening**. But
@@ -971,6 +984,7 @@ sequenceDiagram
     participant C as Client
     participant WS1 as WS Gateway A
     participant WS2 as WS Gateway B
+    participant A as Auth + Directory
     participant N as NATS
     participant SH as Game Shard
     participant R as Redis
@@ -984,15 +998,19 @@ sequenceDiagram
 
     Note over C: player reconnects - may land<br/>on a DIFFERENT gateway
 
-    C->>WS2: WebSocket connect
-    C->>WS2: login + seat_token
-    WS2->>R: GET player:{user_id}
-    R-->>WS2: {room_id, shard_id, color, seat_token}
-    Note over WS2: token must match -<br/>closes the username-only gap
+    C->>A: login
+    A->>R: GET player:{user_id}
+    R-->>A: {room_id, color, seat_token}
+    A-->>C: {jwt, active_seat: {room_id, color, seat_token}}
 
+    C->>WS2: WebSocket connect + jwt
     WS2->>N: subscribe room.{room_id}.*
-    WS2->>N: publish room.{id}.reconnect {color}
+    C->>WS2: resume {seat_token}
+    WS2->>N: publish room.{id}.reconnect {user_id, seat_token}
+    Note over WS2: relays only - no Redis access,<br/>no seat state, no token check
+
     N->>SH: deliver
+    SH->>SH: verify seat_token (owner of the seat)<br/>on mismatch: refuse, countdown keeps running
     SH->>SH: cancel countdown
     SH->>N: room.{id}.state (FULL snapshot - this is what it is for)
     N->>WS2: deliver
@@ -1002,6 +1020,21 @@ sequenceDiagram
 **Key point:** the returning player may land on a completely different gateway, and
 nothing breaks — because gateways are stateless and Redis holds the seat. This is
 impossible in today's design, where the seat lives in one process's `_clients` dict.
+
+**Why the gateway does not read Redis itself.** A WS Gateway is a pipe: terminate the
+socket, verify the JWT that every request carries anyway, relay bytes. Letting it do the
+seat lookup would give every replica the Redis key schema and Redis credentials; letting
+it compare the `seat_token` would make each replica a security decision point. Both
+belong elsewhere — the lookup to the directory service that owns `player:{user_id}`
+([§7](#7-implementation-stages), `services/directory.py`), and the token check to the
+**shard**, which issued the token, owns the room as its single writer, and is running the
+resign countdown the token is meant to cancel. The gateway is told which subject to
+subscribe to; it never derives it.
+
+This costs no extra round trip: login already goes to Auth, so the seat rides back on the
+login response. And note the gateway never learns `shard_id` — it does not need to, per
+[§2.2](#22-is-one-server-enough-for-10m-concurrent-players). NATS routes `room.{id}.*` to
+whichever shard owns the room.
 
 ### 4.4 The protocol change, visually
 

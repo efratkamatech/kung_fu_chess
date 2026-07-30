@@ -53,6 +53,18 @@ class MovesLog:
         """The most recent ``count`` log lines for ``color`` (oldest first)."""
         return self._by_color[color][-count:]
 
+    def seed(self, lines: Dict[Color, List[str]]) -> None:
+        """Replace the log with the lines a server snapshot carries.
+
+        The networked client accumulates its own log from the same events the server
+        logs from, so the two agree — but a client that joins or reconnects mid-game
+        never heard the earlier ones. A full snapshot carries the lines themselves, and
+        this is where they land, rather than a second copy of the formatting rules.
+        """
+        self._by_color = {
+            color: list(lines.get(color, [])) for color in self._by_color
+        }
+
 
 class ScoreBoard:
     """Tallies, per side, the total material value captured by that side."""
@@ -71,6 +83,11 @@ class ScoreBoard:
     def score(self, color: Color) -> int:
         """The total captured value credited to ``color``."""
         return self._score[color]
+
+    def seed(self, scores: Dict[Color, int]) -> None:
+        """Replace the tally with the one a server snapshot carries (see
+        :meth:`MovesLog.seed` — same reason, same moment)."""
+        self._score = {color: scores.get(color, 0) for color in self._score}
 
 
 class GameBanner:
@@ -101,6 +118,11 @@ class GameBanner:
 
     def _on_over(self, event) -> None:
         self._phase = Phase.OVER
+
+    def seed(self, phase: Phase) -> None:
+        """Set the phase from a server snapshot, for a client that missed the event
+        that caused it (see :meth:`MovesLog.seed`)."""
+        self._phase = phase
 
     @property
     def phase(self) -> Phase:
