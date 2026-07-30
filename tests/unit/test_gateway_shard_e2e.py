@@ -18,7 +18,7 @@ from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
-from kfchess.server.room_manager import RoomManager
+from kfchess.services.rooms import Rooms
 from kfchess.server.shard import Shard
 from kfchess.server.user_store import UserStore
 from kfchess.shared.codes import RejectReason
@@ -127,7 +127,7 @@ def open_room_with_a_spectator():
     bus = InProcessMessageBus()
     gateway = Gateway(bus, "gw1")
     # A known room id, so the joiners have something to type.
-    shard = Shard(bus, a_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
+    shard = Shard(bus, a_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"))
 
     white = logged_in(gateway, "Efrat")
     white.send(CreateRoom())
@@ -201,7 +201,7 @@ def test_a_player_leaving_starts_a_countdown_the_spectator_also_sees():
 def test_a_second_gateway_serves_the_same_room_without_knowing_the_first():
     bus = InProcessMessageBus()
     here, there = Gateway(bus, "gw1"), Gateway(bus, "gw2")
-    shard = Shard(bus, a_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
+    shard = Shard(bus, a_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"))
 
     white = logged_in(here, "Efrat")
     white.send(CreateRoom())

@@ -43,8 +43,8 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.server.matchmaker import Matchmaker
-from kfchess.server.room_manager import RoomIdUnavailable, RoomManager
 from kfchess.server.session import GameSession
+from kfchess.services.rooms import RoomIdUnavailable, Rooms
 from kfchess.server.user_store import UserStore
 
 Send = Callable[[str], None]      # how the lobby pushes one wire string to one client
@@ -85,7 +85,7 @@ class Lobby:
         self,
         new_board: NewBoard,
         users: UserStore,
-        rooms: Optional[RoomManager] = None,
+        rooms: Optional[Rooms] = None,
         to_room: Optional[ToRoom] = None,
     ) -> None:
         self._new_board = new_board
@@ -97,9 +97,10 @@ class Lobby:
         # a shard publishing to a subject.
         self._to_room = to_room if to_room is not None else self._send_to_members
         self._matchmaker = Matchmaker()
-        # Injected so a test can hand over an id generator with a known (or exhausted)
-        # sequence, rather than reach into the default one.
-        self._rooms = rooms if rooms is not None else RoomManager()
+        # Injected, for the same reason as the room sink above: the default claims its
+        # ids in this process, and one built on a shared store claims them against every
+        # other shard. A test hands over one with a known (or exhausted) id sequence.
+        self._rooms = rooms if rooms is not None else Rooms()
         self._clients: dict[int, _Client] = {}
         self._games: dict[int, _LiveGame] = {}
         # Who is in each game, kept up to date as clients are seated and leave. It used

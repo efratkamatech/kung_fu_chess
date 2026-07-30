@@ -35,7 +35,7 @@ from kfchess.bus.envelope import (
     encode,
 )
 from kfchess.server.lobby import Lobby, NewBoard
-from kfchess.server.room_manager import RoomManager
+from kfchess.services.rooms import Rooms
 from kfchess.server.user_store import UserStore
 
 _log = logging.getLogger(__name__)  # silent until configure_logging runs
@@ -49,7 +49,7 @@ class Shard:
         bus,
         new_board: NewBoard,
         users: UserStore,
-        rooms: Optional[RoomManager] = None,
+        rooms: Optional[Rooms] = None,
     ) -> None:
         self._bus = bus
         self._hub = Lobby(new_board, users, rooms, to_room=self._publish)

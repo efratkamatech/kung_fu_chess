@@ -37,7 +37,7 @@ from kfchess.shared.protocol import (
     encode,
 )
 from kfchess.server.lobby import Lobby
-from kfchess.server.room_manager import RoomManager
+from kfchess.services.rooms import Rooms
 from kfchess.server.user_store import UserStore
 from kfchess.shared.codes import NoticeReason, RejectReason
 
@@ -604,7 +604,7 @@ def test_a_second_busier_game_pulls_the_wake_up_earlier():
 # --- rooms: the id space running out ------------------------------------------
 
 def test_a_room_that_cannot_get_an_id_is_refused_instead_of_hanging():
-    hub = Lobby(_rook_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
+    hub = Lobby(_rook_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"))
     first, first_id = login_ready(hub, "Efrat")
     hub.receive(first_id, encode(CreateRoom()))  # takes the only id there is
     assert of_type(first, Seated)[-1].room_id == "AAAAAA"
@@ -618,7 +618,7 @@ def test_a_room_that_cannot_get_an_id_is_refused_instead_of_hanging():
 
 def test_a_refused_room_leaves_the_player_free_to_do_something_else():
     """The half-made game is dropped, so the player is still in the lobby, not stuck."""
-    hub = Lobby(_rook_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"))
+    hub = Lobby(_rook_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"))
     _, first_id = login_ready(hub, "Efrat")
     hub.receive(first_id, encode(CreateRoom()))  # takes the only id there is
     refused, refused_id = login_ready(hub, "Dan")
@@ -637,7 +637,7 @@ def test_a_refused_room_leaves_the_player_free_to_do_something_else():
 def test_a_rooms_traffic_is_published_once_however_many_are_watching():
     """Running as a shard: two players and two spectators cost one message, not four."""
     published = []
-    hub = Lobby(_rook_board, UserStore(":memory:"), RoomManager(lambda: "AAAAAA"),
+    hub = Lobby(_rook_board, UserStore(":memory:"), Rooms(generate_id=lambda: "AAAAAA"),
                 to_room=lambda subject, text: published.append((subject, text)))
     creator, cid = login_ready(hub, "Efrat")
     hub.receive(cid, encode(CreateRoom()))
