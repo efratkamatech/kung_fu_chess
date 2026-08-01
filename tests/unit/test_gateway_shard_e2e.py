@@ -12,6 +12,7 @@ what the players see, and the shard must still refuse a move from someone who ha
 """
 
 from kfchess.bus import subjects
+from kfchess.config import MS_PER_CELL
 from kfchess.bus.envelope import decode_to_client
 from kfchess.bus.message_bus import InProcessMessageBus
 from kfchess.gateway.app import Gateway
@@ -326,3 +327,64 @@ def test_a_player_seated_by_one_shard_is_unknown_to_the_other():
 
     assert client.of_type(Welcome)[-1].rating == 1200  # answered exactly once
     assert len(client.of_type(Welcome)) == 1
+
+
+def sought(gateway, name):
+    """A logged-in client who has pressed Play."""
+    client = logged_in(gateway, name)
+    client.send(Play())
+    return client
+
+
+def test_two_players_claimed_by_different_shards_are_seated_in_one_game():
+    """The stage in one test: the queue pairs them, one shard runs it, both are seated."""
+    bus, gateway, _, _ = two_shards()
+
+    white = sought(gateway, "Efrat")   # claimed by one shard, now waiting
+    black = sought(gateway, "Dan")     # claimed by the other, and matched with her
+
+    assert white.of_type(Seated)[-1].color is Color.WHITE
+    assert black.of_type(Seated)[-1].color is Color.BLACK
+
+
+def test_the_game_they_are_seated_in_is_the_same_game():
+    bus, gateway, _, _ = two_shards()
+    white = sought(gateway, "Efrat")
+    black = sought(gateway, "Dan")
+
+    white.send(Move("WRa1a3"))
+
+    assert [m.to_sq for m in black.of_type(MoveStarted)] == ["a3"]
+
+
+def test_both_connections_end_up_owned_by_the_shard_running_the_game():
+    """Her moves have to arrive where her game is, so the seat moves the connection."""
+    bus, gateway, _, _ = two_shards()
+    white = sought(gateway, "Efrat")
+    black = sought(gateway, "Dan")
+
+    assert owner_of(bus, white.conn_id) == owner_of(bus, black.conn_id)
+
+
+def test_the_shard_that_let_go_keeps_nothing_behind():
+    """A shard nobody told would hold a client record for a socket it never hears again."""
+    bus, gateway, first, second = two_shards()
+    white = sought(gateway, "Efrat")
+    sought(gateway, "Dan")  # the match, and the handover with it
+    owner = owner_of(bus, white.conn_id)
+    other = second if owner == "sh1" else first
+
+    assert other.clients == 0
+
+
+def test_a_game_handed_over_still_ends_and_still_pays_out():
+    """Nothing about the game changed because it moved: it is the same lobby running it."""
+    bus, gateway, first, second = two_shards()
+    white = sought(gateway, "Efrat")
+    black = sought(gateway, "Dan")
+
+    white.send(Move("WRa1a3"))
+    for shard in (first, second):
+        shard.tick(2 * MS_PER_CELL)
+
+    assert [m.at_sq for m in black.of_type(Settled)] == ["a3"]

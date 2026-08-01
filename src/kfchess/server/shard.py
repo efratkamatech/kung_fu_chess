@@ -33,6 +33,7 @@ from kfchess.bus.envelope import (
     ClientEventKind,
     ToClient,
     decode_client_event,
+    decode_start_game,
     encode,
 )
 from kfchess.server.lobby import Lobby, NewBoard
@@ -60,7 +61,9 @@ class Shard:
         # shard which has only just started can be given a game before its first tick.
         self._since_heartbeat_ms = 0
         self._allocator.announce(self._shard_id, 0)
-        self._hub = Lobby(new_board, users, shared, to_room=self._publish)
+        self._hub = Lobby(
+            new_board, users, shared, to_room=self._publish, to_shard=self._publish
+        )
         # conn_id -> the lobby's own client number, and the room that connection has
         # already been told to follow. Both are dropped when the socket closes.
         self._client_of: Dict[str, int] = {}
@@ -78,6 +81,10 @@ class Shard:
         # And everything from the connections this shard already owns, addressed to it
         # by name. No group here: these are nobody else's to answer.
         self._bus.subscribe(subjects.shard_cmd(self._shard_id), self._on_client_event)
+        # And games handed to this shard by another one that made the match.
+        self._bus.subscribe(
+            subjects.shard_start_game(self._shard_id), self._on_start_game
+        )
 
     # --- what the gateways report ---------------------------------------------
 
@@ -85,7 +92,9 @@ class Shard:
         """One thing that happened on one socket, somewhere out there."""
         event = decode_client_event(payload)
         if event.kind is ClientEventKind.CONNECTED:
-            self._client_of[event.conn_id] = self._hub.connect(self._sender(event.conn_id))
+            self._client_of[event.conn_id] = self._hub.connect(
+                self._sender(event.conn_id), event.conn_id
+            )
             _log.info("connection %s registered", event.conn_id)
             # Nothing to say to her yet -- she has not spoken. But her gateway has to be
             # told where to send it when she does, so an empty envelope goes back
@@ -95,8 +104,42 @@ class Shard:
             client_id = self._client_of.get(event.conn_id)
             if client_id is not None:  # it closed before this arrived
                 self._hub.receive(client_id, event.text)
+        elif event.kind is ClientEventKind.RELEASED:
+            self._on_released(event.conn_id)
         else:
             self._on_gone(event.conn_id)
+
+    def _on_start_game(self, subject: str, payload: str) -> None:
+        """Another shard matched two players and chose this one to run their game.
+
+        Either of them may be a complete stranger here — on a gateway this shard has
+        never answered, claimed a moment ago by a shard that is now letting go. So each
+        one is registered as a client if she is not already, and the seat that follows is
+        what tells her gateway to send her moves here from now on.
+        """
+        request = decode_start_game(payload)
+        _log.info(
+            "running a game for %s and %s", request.white.username, request.black.username
+        )
+        self._hub.start_game(
+            self._client_for(request.white), self._client_for(request.black)
+        )
+
+    def _client_for(self, seatee):
+        """This shard's client number for one player of a handed-over game."""
+        client_id = self._client_of.get(seatee.conn_id)
+        if client_id is None:
+            client_id = self._hub.connect(self._sender(seatee.conn_id), seatee.conn_id)
+            self._client_of[seatee.conn_id] = client_id
+        return client_id, seatee.username, seatee.rating
+
+    def _on_released(self, conn_id: str) -> None:
+        """This connection has been seated by another shard; it is no longer ours."""
+        self._following.pop(conn_id, None)
+        self._claimed.discard(conn_id)
+        client_id = self._client_of.pop(conn_id, None)
+        if client_id is not None:
+            self._hub.release(client_id)
 
     def _on_gone(self, conn_id: str) -> None:
         """A socket closed. Whether that matters is the lobby's to decide: a player
@@ -189,6 +232,16 @@ class Shard:
     def next_event_delay_ms(self) -> Optional[int]:
         """When this shard next has something to do — see :func:`next_sleep_s`."""
         return self._hub.next_event_delay_ms()
+
+    @property
+    def clients(self) -> int:
+        """How many connections this shard is holding — for logs, health, and tests.
+
+        The mirror of :attr:`kfchess.gateway.app.Gateway.connections`, and the number
+        that would quietly climb for ever if a shard were not told when a connection it
+        was holding has been seated somewhere else.
+        """
+        return len(self._client_of)
 
 
 def next_sleep_s(shard, ceiling_ms: int) -> float:

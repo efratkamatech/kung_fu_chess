@@ -36,6 +36,7 @@ measurement says the key is hot, not before.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -74,15 +75,27 @@ class Match:
     black: str
     white_rating: int = 0
     black_rating: int = 0
+    # Where the earlier arrival is sitting: her connection, and the shard holding it.
+    # The seeker who completes the match is on the shard doing the pairing and needs no
+    # introduction; her partner may be anywhere, and somebody has to be able to reach her.
+    white_conn_id: str = ""
+    white_shard_id: str = ""
 
 
 @dataclass(frozen=True)
 class Waiter:
-    """One player in the queue, as read back out of it."""
+    """One player in the queue, as read back out of it.
+
+    ``conn_id`` and ``shard_id`` are how she is *reached* once she is matched. They are
+    written down when she joins rather than looked up afterwards, because by then the
+    only thing anyone knows about her is her name, and a name is not an address.
+    """
 
     username: str
     rating: int
     joined_ms: int
+    conn_id: str = ""
+    shard_id: str = ""
 
     @property
     def member(self) -> str:
@@ -110,23 +123,36 @@ class Matchmaker:
         self._timeout_ms = timeout_ms
         self._now_ms = now_ms
 
-    def seek(self, username: str, rating: int) -> Optional[Match]:
+    def seek(
+        self, username: str, rating: int, conn_id: str = "", shard_id: str = ""
+    ) -> Optional[Match]:
         """Pair ``username`` with the closest waiting seeker in range, else enqueue her.
 
         Returns the :class:`Match` if one was made — the
         partner is taken out of the queue, and plays white for having arrived first — or
-        ``None``, in which case she is now waiting.
+        ``None``, in which case she is now waiting, at the address given.
         """
         partner = self._closest_waiting(username, rating)
         if partner is not None:
+            # The ranking is indexed by rating and carries only what a search needs to
+            # compare. Her address lives in her own record, and is worth exactly one more
+            # lookup — once, on the seek that actually matches, not on every candidate.
+            addressed = self._waiting(partner.username) or partner
             self._remove(partner)
-            return Match(partner.username, username, partner.rating, rating)
+            return Match(
+                partner.username,
+                username,
+                partner.rating,
+                rating,
+                addressed.conn_id,
+                addressed.shard_id,
+            )
         # Whatever this player left in the queue last time goes first. She may have given
         # up waiting and come back: her old entry is still in the ranking (nothing sweeps
         # it), and a player listed twice under two arrival times is one somebody can be
         # paired with at an address she is no longer answering.
         self.cancel(username)
-        self._add(Waiter(username, rating, self._now_ms()))
+        self._add(Waiter(username, rating, self._now_ms(), conn_id, shard_id))
         return None
 
     def cancel(self, username: str) -> None:
@@ -205,7 +231,14 @@ class Matchmaker:
         # one, findable by nobody and removable by nobody but the next passing search.
         self._store.set(
             _seeker_key(waiter.username),
-            f"{waiter.joined_ms}{_SEPARATOR}{waiter.rating}",
+            json.dumps(
+                {
+                    "joined_ms": waiter.joined_ms,
+                    "rating": waiter.rating,
+                    "conn_id": waiter.conn_id,
+                    "shard_id": waiter.shard_id,
+                }
+            ),
             ttl_s=_SEEKER_TTL_FACTOR * self._timeout_ms // 1000,
         )
 
@@ -217,8 +250,14 @@ class Matchmaker:
         stored = self._store.get(_seeker_key(username))
         if stored is None:
             return None
-        joined_ms, rating = stored.split(_SEPARATOR)
-        return Waiter(username, int(rating), int(joined_ms))
+        record = json.loads(stored)
+        return Waiter(
+            username,
+            record["rating"],
+            record["joined_ms"],
+            record["conn_id"],
+            record["shard_id"],
+        )
 
 
 def _seeker_key(username: str) -> str:

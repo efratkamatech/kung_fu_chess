@@ -26,11 +26,18 @@ from kfchess.shared.codes import WireEnum
 
 
 class ClientEventKind(WireEnum):
-    """The three things a gateway ever reports about a connection."""
+    """What can be said about a connection on a shard's inbox.
+
+    The first three are a gateway reporting on a socket. The fourth is one shard telling
+    another that a connection it was holding has been seated elsewhere and is no longer
+    its concern — the same subject, because it is the same subject matter: something has
+    happened to a connection you know about.
+    """
 
     CONNECTED = "connected"        # a socket opened; nothing has been said on it yet
     MESSAGE = "message"            # the client sent this text
     DISCONNECTED = "disconnected"  # the socket closed, cleanly or otherwise
+    RELEASED = "released"          # another shard has taken this connection over
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,54 @@ class ToClient:
 # `conn.{gateway}.{connection}` mailbox. Hence two decoders and one encoder.
 
 
+@dataclass(frozen=True)
+class Seatee:
+    """One player being handed to the shard that will run her game.
+
+    Everything that shard needs and has no way to look up: which connection she is on,
+    who she is, and what she is rated. It may never have spoken to her — that is the
+    point — so asking it to find any of this out would be a database round trip for
+    something the matchmaking queue was already sorted by.
+    """
+
+    conn_id: str
+    username: str
+    rating: int
+
+    def to_dict(self) -> dict:
+        return {
+            "conn_id": self.conn_id,
+            "username": self.username,
+            "rating": self.rating,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Seatee":
+        return cls(data["conn_id"], data["username"], data["rating"])
+
+
+@dataclass(frozen=True)
+class StartGame:
+    """Shard -> shard: run a game between these two, whoever was holding them.
+
+    The one message that moves work rather than reporting it. It is addressed to a shard
+    the allocator chose, and the pair inside it may be sitting on two different gateways
+    and have been claimed by two different shards a moment ago. The receiver does not
+    care and does not ask: it makes a game, seats them both, and claims their connections
+    on the way past.
+    """
+
+    white: Seatee
+    black: Seatee
+
+    def to_dict(self) -> dict:
+        return {"white": self.white.to_dict(), "black": self.black.to_dict()}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartGame":
+        return cls(Seatee.from_dict(data["white"]), Seatee.from_dict(data["black"]))
+
+
 def encode(envelope) -> str:
     """Pack an envelope into the JSON string that goes on the wire."""
     return json.dumps(envelope.to_dict())
@@ -122,3 +177,8 @@ def decode_client_event(payload: str) -> ClientEvent:
 def decode_to_client(payload: str) -> ToClient:
     """Read a :class:`ToClient` off a connection's mailbox."""
     return ToClient.from_dict(json.loads(payload))
+
+
+def decode_start_game(payload: str) -> StartGame:
+    """Read a :class:`StartGame` off a shard's own start-game subject."""
+    return StartGame.from_dict(json.loads(payload))

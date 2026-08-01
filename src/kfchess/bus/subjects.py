@@ -75,6 +75,16 @@ def shard_cmd(shard_id: str) -> str:
     return f"shard.{shard_id}.cmd"
 
 
+def shard_start_game(shard_id: str) -> str:
+    """Where one shard is asked to run a new game between two named players.
+
+    Its own subject rather than a field on the command channel above, because it is the
+    only message that arrives from another *shard* rather than from a gateway, and
+    keeping the two apart means neither decoder has to ask which it is looking at.
+    """
+    return f"shard.{shard_id}.start_game"
+
+
 def gateway_inbox(gateway_id: str) -> str:
     """Everything addressed to any connection this gateway holds."""
     return f"conn.{gateway_id}.{_MATCH_REST}"

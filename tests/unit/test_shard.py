@@ -147,3 +147,12 @@ def test_a_shard_does_not_report_on_every_tick():
         shard.tick(SHARD_HEARTBEAT_MS // 10 - 1)
 
     assert writes == []
+
+
+def test_releasing_a_connection_this_shard_never_held_is_harmless():
+    """A release can arrive twice, or late. It must not be the thing that takes a shard down."""
+    bus, shard = a_shard()
+
+    report(bus, ClientEventKind.RELEASED, "gw9.4")
+
+    assert shard.clients == 0

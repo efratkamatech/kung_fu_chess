@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from hmac import compare_digest
 from typing import Callable, List, Optional, Tuple
 
-from kfchess.bus import subjects
+from kfchess.bus import envelope, subjects
 from kfchess.config import SNAPSHOT_RESYNC_MS
 from kfchess.model.board import Board
 from kfchess.model.color import Color
@@ -62,6 +62,10 @@ class _Client:
     """Everything the lobby tracks about one connected client, updated as it plays."""
 
     send: Send
+    # How the world outside this process names this client's socket. Opaque here — the
+    # lobby never reads it — but it is the only thing another shard could use to reach
+    # her, so it travels with any match she is part of.
+    address: str = ""
     username: Optional[str] = None      # set on a successful login
     rating: Optional[int] = None        # the account's ELO, from the login
     session_id: Optional[int] = None    # which game it is in; None means "in the lobby"
@@ -90,6 +94,7 @@ class Lobby:
         users: UserStore,
         shared: Optional[SharedState] = None,
         to_room: Optional[ToRoom] = None,
+        to_shard: Optional[ToRoom] = None,
     ) -> None:
         self._new_board = new_board
         self._users = users
@@ -99,6 +104,10 @@ class Lobby:
         # them. Injected, so the same hub runs as one process (the default below) or as
         # a shard publishing to a subject.
         self._to_room = to_room if to_room is not None else self._send_to_members
+        # How this lobby reaches another shard. ``None`` means it is not wired to a bus
+        # at all -- a lobby driven directly by a test -- and such a lobby can only seat
+        # players it is already holding.
+        self._to_shard = to_shard
         # Injected, for the same reason as the room sink above: the default keeps the
         # queue and the room ids in this process, and one built on a shared store keeps
         # them where every other shard can see them. The lobby cannot tell which it got.
@@ -106,6 +115,7 @@ class Lobby:
         self._matchmaker = shared.matchmaker
         self._rooms = shared.rooms
         self._directory = shared.directory
+        self._allocator = shared.allocator
         self._shard_id = shared.shard_id
         self._clients: dict[int, _Client] = {}
         # Who, of the players waiting in that shared queue, is one of mine. The queue
@@ -122,15 +132,16 @@ class Lobby:
 
     # --- connection lifecycle ------------------------------------------------
 
-    def connect(self, send: Send) -> int:
+    def connect(self, send: Send, address: str = "") -> int:
         """Register a new client (in the "connected" state) and return its id.
 
         Nothing is sent yet: there is no game to show until the player logs in and is
-        seated. The id is used by :meth:`receive` and :meth:`disconnect`.
+        seated. The id is used by :meth:`receive` and :meth:`disconnect`; ``address`` is
+        how anything outside this process would name the same client.
         """
         client_id = self._next_client_id
         self._next_client_id += 1
-        self._clients[client_id] = _Client(send)
+        self._clients[client_id] = _Client(send, address)
         _log.info("client %d connected", client_id)
         return client_id
 
@@ -327,19 +338,89 @@ class Lobby:
         if self._matchmaker.is_waiting(client.username):
             return  # already searching
         self._seeking[client.username] = client_id
-        match = self._matchmaker.seek(client.username, client.rating)
+        match = self._matchmaker.seek(
+            client.username, client.rating, client.address, self._shard_id
+        )
         if match is None:
             return
-        partner_id = self._seeking.pop(match.white, None)
-        if partner_id is None:
-            # She was waiting on another shard. Seating her from here is S4.3's job --
-            # it needs a shard chosen to run the game and both connections handed to it.
-            # Until then the honest thing is to put her back rather than drop her: she
-            # keeps waiting, and the next seeker who *can* seat her will.
-            self._matchmaker.seek(match.white, match.white_rating)
-            _log.info("matched %r on another shard; left in the queue", match.white)
+        self._place(match, self._seeking.pop(match.black))
+
+    def _place(self, match, black_id: int) -> None:
+        """Get this pair a game, wherever it has to run and whoever is holding them.
+
+        The fast path is both players on this shard and this shard chosen to run it,
+        which is every game in a single-process deployment and most of them in a large
+        one. Otherwise the pair is handed to the shard the allocator picked, and both
+        connections leave this lobby: whoever takes the game takes them with it.
+        """
+        white_id = self._seeking.pop(match.white, None)
+        target = self._allocator.allocate() or self._shard_id
+        if white_id is not None and target == self._shard_id:
+            self._start_game(white_id, black_id)
             return
-        self._start_game(partner_id, self._seeking.pop(match.black))
+        if self._to_shard is None:
+            # No bus, so nothing to hand to. She goes back in the queue rather than being
+            # dropped: she pressed Play and is owed a game, and the next seeker who can
+            # seat her will find her there.
+            self._matchmaker.seek(
+                match.white, match.white_rating, match.white_conn_id, match.white_shard_id
+            )
+            _log.info("cannot reach %r from here; left in the queue", match.white)
+            return
+        black = self._clients[black_id]
+        _log.info("game for %r and %r handed to %s", match.white, match.black, target)
+        self._to_shard(
+            subjects.shard_start_game(target),
+            envelope.encode(
+                envelope.StartGame(
+                    envelope.Seatee(match.white_conn_id, match.white, match.white_rating),
+                    envelope.Seatee(black.address, match.black, match.black_rating),
+                )
+            ),
+        )
+        # And now whoever was holding them lets go -- including this shard, through the
+        # same message rather than by reaching into itself, so a connection is forgotten
+        # in exactly one place however far away it was being held. The shard now running
+        # the game is skipped: it has just claimed them, and telling it to let go of what
+        # it was told to take would undo the seating a line above.
+        for shard_id, conn_id in (
+            (match.white_shard_id, match.white_conn_id),
+            (self._shard_id, black.address),
+        ):
+            if shard_id and shard_id != target:
+                self._to_shard(
+                    subjects.shard_cmd(shard_id),
+                    envelope.encode(
+                        envelope.ClientEvent(
+                            envelope.ClientEventKind.RELEASED, conn_id
+                        )
+                    ),
+                )
+
+    def start_game(self, white: Tuple[int, str, int], black: Tuple[int, str, int]) -> None:
+        """Run a game between two clients another shard matched, and seat them.
+
+        The receiving end of :meth:`_place`. The names and ratings arrive with the
+        request because this shard may never have spoken to either player — that is the
+        whole point of being able to hand a game over — and going to the database for
+        what the queue was already sorted by would be a round trip to learn what somebody
+        else had just read.
+        """
+        for client_id, username, rating in (white, black):
+            client = self._clients[client_id]
+            client.username = username
+            client.rating = rating
+        self._start_game(white[0], black[0])
+
+    def release(self, client_id: int) -> None:
+        """Forget a client that now belongs to another shard.
+
+        Not a disconnect: her socket is fine, and the shard taking her over is about to
+        seat her. So there is no resign countdown, nothing is broadcast, and the game she
+        is being seated in is not this shard's to know about.
+        """
+        self._stop_seeking(self._clients.pop(client_id))
+        _log.info("client %d released", client_id)
 
     def _stop_seeking(self, client: _Client) -> None:
         """Take a client out of the shared queue, if she is in it and has a name to be in
