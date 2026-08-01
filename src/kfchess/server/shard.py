@@ -141,6 +141,29 @@ def next_sleep_s(shard, ceiling_ms: int) -> float:
     return (ceiling_ms if due_ms is None else min(due_ms, ceiling_ms)) / 1000
 
 
+async def run_games(shard: Shard, tick_ms: int = None) -> None:  # pragma: no cover
+    """Advance ``shard``'s games for ever, waking only when one of them needs it.
+
+    The clock, and nothing else. Both deployments run this exact loop — a shard on the
+    far end of NATS, and the solo server in the same process as its own sockets — so
+    time passes the same way in a game played on a laptop and one played on a cluster.
+    """
+    import asyncio
+    import time
+
+    from kfchess.config import SERVER_TICK_MS
+
+    tick_ms = tick_ms or SERVER_TICK_MS
+    # Measured elapsed time, not the interval we asked to sleep for: a loop that advances
+    # by a constant falls further behind the wall clock the busier it gets.
+    last = time.monotonic()
+    while True:
+        await asyncio.sleep(next_sleep_s(shard, tick_ms))
+        now = time.monotonic()
+        shard.tick(round((now - last) * 1000))
+        last = now
+
+
 async def serve(  # pragma: no cover  (irreducible async NATS + timer I/O)
     new_board: NewBoard,
     nats_url: str = None,
@@ -148,28 +171,23 @@ async def serve(  # pragma: no cover  (irreducible async NATS + timer I/O)
 ) -> None:
     """Run one shard until cancelled: answer the bus, and advance the games.
 
-    No ``websockets`` import anywhere in this file — that is the point of the stage. Both
-    decisions this makes, how long to sleep and how much time has passed, are
+    No ``websockets`` import anywhere in this file — that is the point of the stage. The
+    two things it decides, how long to sleep and how much time has passed, are
     :func:`next_sleep_s` and a subtraction; everything else is in :class:`Shard`.
+
+    This is the deployment where the shared state has to be genuinely shared, so it opens
+    a Redis. The solo server builds the same :class:`~kfchess.services.shared.SharedState`
+    over a dictionary and runs the same lobby against it.
     """
     import asyncio
-    import time
 
     from kfchess.bus.message_bus import connect
-    from kfchess.config import NATS_URL, SERVER_TICK_MS
+    from kfchess.config import NATS_URL, REDIS_URL, SHARD_ID
+    from kfchess.services.shared import SharedState
+    from kfchess.services.store import connect as connect_store
 
-    tick_ms = tick_ms or SERVER_TICK_MS
     bus = await connect(nats_url or NATS_URL)
-    shard = Shard(bus, new_board, UserStore())
+    shared = SharedState.on(connect_store(REDIS_URL), SHARD_ID)
+    shard = Shard(bus, new_board, UserStore(), shared)
 
-    async def ticker() -> None:
-        # Measured elapsed time, not the interval we asked to sleep for: a loop that
-        # advances by a constant falls further behind the wall clock the busier it gets.
-        last = time.monotonic()
-        while True:
-            await asyncio.sleep(next_sleep_s(shard, tick_ms))
-            now = time.monotonic()
-            shard.tick(round((now - last) * 1000))
-            last = now
-
-    await asyncio.gather(bus.run(), ticker())
+    await asyncio.gather(bus.run(), run_games(shard, tick_ms))

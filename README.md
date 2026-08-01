@@ -54,12 +54,11 @@ python main.py < path/to/fixture.in
 python graphics_main.py --white Alice --black Bob
 ```
 
-**Networked multiplayer** — the server is two processes now: a **gateway** holding the
-WebSocket connections, and a **shard** running the games, with NATS between them. Bring
-the whole thing up with Docker, then one client per player on the host:
+**Networked multiplayer, on one machine** — one process, no infrastructure of any kind.
+Start the server, then one client per player:
 
 ```bash
-docker compose up --build
+python server_main.py --solo
 ```
 
 ```bash
@@ -67,17 +66,30 @@ python client_main.py --url ws://localhost:8765
 ```
 
 The client asks for a username and password in the shell, then opens the window once you
-are matched. It needs the `graphics` extra; the server side needs only `server`, and
-nothing about the client changed — it still talks to one WebSocket and cannot tell that
-there are now four containers behind it.
+are matched. It needs the `graphics` extra; the server needs `server` (only `websockets`
+is actually loaded in this mode). Accounts and ratings go to a local SQLite file.
 
-Compose runs four services: `gateway` (the only one with a published port), `shard`,
-`nats`, and `postgres`. Accounts and ratings live in a named volume, so they survive
-`docker compose down`. The shard picks its database from `DATABASE_URL`: set, it speaks
-PostgreSQL; unset, it keeps a local SQLite file.
+**Networked multiplayer, split up** — the same server as several processes: a **gateway**
+holding the WebSocket connections and a **shard** running the games, with NATS between
+them, Redis for the state they share, and PostgreSQL for the accounts. Bring it up with
+Docker and connect exactly the same clients:
 
-To run the two by hand instead, you still need a NATS server (`NATS_URL`, default
-`nats://localhost:4222`), then `python server_main.py` and `python gateway_main.py`.
+```bash
+docker compose up --build
+```
+
+Compose runs five services: `gateway` (the only one with a published port), `shard`,
+`nats`, `redis`, and `postgres`. Accounts and ratings live in a named volume, so they
+survive `docker compose down`; Redis deliberately has none, since everything in it
+expires in minutes anyway. To run the pieces by hand instead you need NATS and Redis
+(`NATS_URL`, `REDIS_URL`), then `python server_main.py` and `python gateway_main.py`.
+
+**The two are the same game.** Not a cut-down local build and a real one: the same
+gateway holds the sockets, the same shard runs the games, and the same lobby decides
+everything either is asked. Two objects underneath them differ — the bus between gateway
+and shard, and the store the shared state lives in — and both are chosen in one line, in
+`server/solo.py` and `shard.serve`. Nothing above that line can tell which it got, and
+the client never could: it opens one WebSocket either way.
 
 ### Controls (windowed game & client)
 

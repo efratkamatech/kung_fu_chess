@@ -113,35 +113,29 @@ class Gateway:
         return len(self._router)
 
 
-async def serve(  # pragma: no cover  (irreducible async socket + NATS I/O)
-    gateway_id: str,
+async def listen(  # pragma: no cover  (irreducible async socket I/O)
+    gateway: Gateway,
     host: str = None,
     port: int = None,
-    nats_url: str = None,
-) -> None:
-    """Accept WebSockets and bridge them onto NATS until cancelled.
+):
+    """Open the WebSocket listener that feeds ``gateway``, and hand it back.
 
-    Every decision this makes is in :class:`Gateway` above and is tested there; what is
-    left is opening a listener, opening a NATS connection, and pumping bytes between the
-    two — the same thin shell ``shard.serve`` is.
+    An async context manager, so the caller decides what to run *while* it is open —
+    :func:`serve` runs the NATS pump, and the solo server runs the games themselves.
+    That is the only difference between the two deployments on this side of the wire:
+    the sockets, the connection ids, and every decision in :class:`Gateway` are the same
+    in both, which is what makes "it works locally" evidence about the other one.
     """
     import asyncio
 
     import websockets
 
-    from kfchess.bus.message_bus import connect
     from kfchess.config import (
-        NATS_URL,
         SERVER_HOST,
         SERVER_PORT,
         WS_PING_INTERVAL_S,
         WS_PING_TIMEOUT_S,
     )
-
-    host = host or SERVER_HOST
-    port = port or SERVER_PORT
-    bus = await connect(nats_url or NATS_URL)
-    gateway = Gateway(bus, gateway_id)
 
     async def drain(queue: "asyncio.Queue", websocket) -> None:
         while True:
@@ -158,11 +152,30 @@ async def serve(  # pragma: no cover  (irreducible async socket + NATS I/O)
             gateway.disconnect(conn_id)
             sender.cancel()
 
-    async with websockets.serve(
+    return websockets.serve(
         handler,
-        host,
-        port,
+        host or SERVER_HOST,
+        port or SERVER_PORT,
         ping_interval=WS_PING_INTERVAL_S,
         ping_timeout=WS_PING_TIMEOUT_S,
-    ):
+    )
+
+
+async def serve(  # pragma: no cover  (irreducible async socket + NATS I/O)
+    gateway_id: str,
+    host: str = None,
+    port: int = None,
+    nats_url: str = None,
+) -> None:
+    """Accept WebSockets and bridge them onto NATS until cancelled.
+
+    Every decision this makes is in :class:`Gateway` above and is tested there; what is
+    left is opening a listener, opening a NATS connection, and pumping bytes between the
+    two — the same thin shell ``shard.serve`` is.
+    """
+    from kfchess.bus.message_bus import connect
+    from kfchess.config import NATS_URL
+
+    bus = await connect(nats_url or NATS_URL)
+    async with await listen(Gateway(bus, gateway_id), host, port):
         await bus.run()  # forever: performs the queued publishes and subscriptions

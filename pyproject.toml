@@ -19,12 +19,15 @@ dev = [
 ]
 # The networked server. The text core stays pure stdlib; only the WebSocket
 # server needs this. Installed with:  pip install -e ".[server]"
-# psycopg is optional at runtime too: it is imported only when DATABASE_URL names a
-# PostgreSQL server, so a laptop on SQLite never touches it.
+# Every one of these is optional at *runtime* as well, which is what keeps
+# `python server_main.py --solo` a real option: psycopg is imported only when
+# DATABASE_URL names a PostgreSQL, and nats-py and redis only when the split deployment
+# opens them. The solo server needs websockets and nothing else on this list.
 server = [
     "websockets>=12",
     "psycopg[binary]>=3.1",
     "nats-py>=2.6",
+    "redis>=5.0",
 ]
 # The windowed game and the networked client render with OpenCV (the text core and
 # the headless server never import it). Installed with:  pip install -e ".[graphics]"
