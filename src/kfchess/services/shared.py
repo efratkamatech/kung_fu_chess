@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from kfchess.config import SHARD_ID
+from kfchess.services.allocator import Allocator
 from kfchess.services.directory import PlayerDirectory
 from kfchess.services.matchmaker import Matchmaker, wall_clock_ms
 from kfchess.services.rooms import Rooms, random_id
@@ -28,11 +29,12 @@ from kfchess.services.store import InMemoryKeyValueStore
 
 @dataclass(frozen=True)
 class SharedState:
-    """The room ids, the waiting queue, and the player directory, over one store."""
+    """The room ids, the queue, the directory and the shard pool, over one store."""
 
     rooms: Rooms
     matchmaker: Matchmaker
     directory: PlayerDirectory
+    allocator: Allocator
     # Who *this* process is, in the directory's answers. A seat records the shard running
     # it, and a shard reading one back has to recognise its own name to know whether the
     # game is here or somewhere it will have to send the player instead.
@@ -58,5 +60,6 @@ class SharedState:
             rooms=Rooms(store, shard_id, generate_id=generate_id),
             matchmaker=Matchmaker(store, now_ms=now_ms),
             directory=PlayerDirectory(store),
+            allocator=Allocator(store),
             shard_id=shard_id,
         )

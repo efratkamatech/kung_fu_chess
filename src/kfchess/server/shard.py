@@ -28,6 +28,7 @@ import logging
 from typing import Dict, Optional, Set
 
 from kfchess.bus import subjects
+from kfchess.config import SHARD_HEARTBEAT_MS
 from kfchess.bus.envelope import (
     ClientEventKind,
     ToClient,
@@ -54,6 +55,11 @@ class Shard:
         self._bus = bus
         shared = shared if shared is not None else SharedState.on()
         self._shard_id = shared.shard_id
+        self._allocator = shared.allocator
+        # Time since this shard last said it was alive. It says so immediately, so that a
+        # shard which has only just started can be given a game before its first tick.
+        self._since_heartbeat_ms = 0
+        self._allocator.announce(self._shard_id, 0)
         self._hub = Lobby(new_board, users, shared, to_room=self._publish)
         # conn_id -> the lobby's own client number, and the room that connection has
         # already been told to follow. Both are dropped when the socket closes.
@@ -164,8 +170,21 @@ class Shard:
     # --- time ------------------------------------------------------------------
 
     def tick(self, dt_ms: int) -> None:
-        """Advance every game this shard is running."""
+        """Advance every game this shard is running, and say that it is still running."""
         self._hub.tick(dt_ms)
+        self._heartbeat(dt_ms)
+
+    def _heartbeat(self, dt_ms: int) -> None:
+        """Every ``SHARD_HEARTBEAT_MS``, tell the pool this shard is alive and how busy.
+
+        On the tick, rather than when a game starts or ends, because the message is
+        "still here" and not "something changed" — a shard whose game count is steady is
+        exactly the one whose silence would be mistaken for death.
+        """
+        self._since_heartbeat_ms += dt_ms
+        if self._since_heartbeat_ms >= SHARD_HEARTBEAT_MS:
+            self._since_heartbeat_ms = 0
+            self._allocator.announce(self._shard_id, self._hub.game_count)
 
     def next_event_delay_ms(self) -> Optional[int]:
         """When this shard next has something to do — see :func:`next_sleep_s`."""

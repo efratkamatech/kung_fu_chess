@@ -442,6 +442,11 @@ class Lobby:
         # to affect, a spectator dropping into a game already in progress.
         self._send(client_id, State(game.session.snapshot()))
 
+    @property
+    def game_count(self) -> int:
+        """How many games this lobby is running — what "load" means for a shard."""
+        return len(self._games)
+
     def game_of(self, client_id: int) -> Optional[int]:
         """Which game a client is in, or ``None`` for one still in the lobby or gone.
 

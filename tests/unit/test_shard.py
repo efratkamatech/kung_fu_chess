@@ -8,13 +8,15 @@ tested with a fake hub instead of a running event loop.
 from kfchess.bus import subjects
 from kfchess.bus.envelope import ClientEvent, ClientEventKind, encode
 from kfchess.bus.message_bus import InProcessMessageBus
-from kfchess.config import MS_PER_CELL
+from kfchess.config import MS_PER_CELL, SHARD_HEARTBEAT_MS
 from kfchess.model.board import Board
 from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.server.shard import Shard, next_sleep_s
 from kfchess.server.user_store import UserStore
+from kfchess.services.shared import SharedState
+from kfchess.services.store import InMemoryKeyValueStore
 from kfchess.shared.protocol import Login, Move, Play
 from kfchess.shared.protocol import encode as encode_wire
 
@@ -95,3 +97,53 @@ def test_a_disconnect_for_a_connection_the_shard_never_saw_is_harmless():
     bus, shard = a_shard()
     report(bus, ClientEventKind.DISCONNECTED, "gw9.4")  # must not raise
     assert shard.next_event_delay_ms() is None
+
+
+# --- staying in the pool -------------------------------------------------------
+
+def a_pooled_shard():
+    """A shard whose pool a test can read, and the store it reports into."""
+    reg = standard_piece_types()
+
+    def board():
+        return Board.from_grid([
+            [None, None, None],
+            [None, None, None],
+            [Piece(reg.get("R"), Color.WHITE), None, None],
+        ])
+
+    store = InMemoryKeyValueStore()
+    shared = SharedState.on(store, "sh1")
+    bus = InProcessMessageBus()
+    return bus, Shard(bus, board, UserStore(":memory:"), shared), shared, store
+
+
+def test_a_shard_is_in_the_pool_before_its_first_tick():
+    """A shard that just started must be allocatable at once, not in five seconds."""
+    _, _, shared, _ = a_pooled_shard()
+
+    assert shared.allocator.allocate() == "sh1"
+
+
+def test_the_heartbeat_reports_how_many_games_are_running():
+    bus, shard, _, store = a_pooled_shard()
+    for number, name in enumerate(("Efrat", "Dan")):  # two players -> one game
+        report(bus, ClientEventKind.CONNECTED, f"gw1.{number}")
+        report(bus, ClientEventKind.MESSAGE, f"gw1.{number}", encode_wire(Login(name, "pw")))
+        report(bus, ClientEventKind.MESSAGE, f"gw1.{number}", encode_wire(Play()))
+
+    shard.tick(SHARD_HEARTBEAT_MS)
+
+    assert store.get("shard:sh1:alive") == "1"
+
+
+def test_a_shard_does_not_report_on_every_tick():
+    """Twenty writes a second per shard, for a number that changes once a minute."""
+    _, shard, shared, _ = a_pooled_shard()
+    writes = []
+    shared.allocator.announce = lambda *args: writes.append(args)
+
+    for _ in range(10):
+        shard.tick(SHARD_HEARTBEAT_MS // 10 - 1)
+
+    assert writes == []

@@ -200,6 +200,17 @@ SEAT_TOKEN_BYTES = 16
 # clears itself rather than pointing at a game that no longer exists.
 PLAYER_TTL_S = 300
 
+# --- The pool of shards (S4) -------------------------------------------------
+# How long a shard's "still here" key lives. Nothing announces a crash, so this is the
+# whole of how a dead shard leaves the pool: it stops writing, and shortly afterwards
+# stops existing as far as anyone allocating a game is concerned.
+SHARD_TTL_S = 15
+# How often a shard rewrites that key, and its game count with it. Comfortably inside the
+# TTL above -- three heartbeats may be lost before a live shard is mistaken for a dead one
+# -- because the cost of being wrong in that direction is refusing to place a game on a
+# machine that was fine.
+SHARD_HEARTBEAT_MS = 5_000
+
 # --- Rooms (M6) --------------------------------------------------------------
 # Crockford base32: the digits and uppercase letters with O, I, L and U removed, so an
 # id read aloud or typed off a screenshot cannot be mistaken (no 0/O, no 1/I/L). Six
