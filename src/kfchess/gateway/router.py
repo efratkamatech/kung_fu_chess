@@ -37,6 +37,13 @@ class ConnectionRouter:
         # only follow() and close() touch this.
         self._rooms: Dict[str, Set[str]] = {}
         self._room_of: Dict[str, str] = {}
+        # Which shard each connection belongs to, once one has claimed it, and what the
+        # client said before that answer arrived. The gap is real: a socket opens and the
+        # player's login is on its way before any shard has replied, and the whole point
+        # of the claim is that those two messages must not be answered by different
+        # shards. So the gateway holds them for the moment it takes, in order.
+        self._owner: Dict[str, str] = {}
+        self._held: Dict[str, List[str]] = {}
 
     def open(self, send: Send) -> str:
         """Register a new socket and return the id the shard will address it by.
@@ -50,6 +57,25 @@ class ConnectionRouter:
         self._sends[conn_id] = send
         return conn_id
 
+    def owner(self, conn_id: str) -> Optional[str]:
+        """Which shard this connection belongs to, or ``None`` if none has claimed it."""
+        return self._owner.get(conn_id)
+
+    def hold(self, conn_id: str, text: str) -> None:
+        """Keep what a client said until a shard claims her — see :meth:`claim`."""
+        self._held.setdefault(conn_id, []).append(text)
+
+    def claim(self, conn_id: str, shard_id: str) -> List[str]:
+        """Record this connection's owner, and hand back anything held for it.
+
+        Called on a *first* claim and on a handover alike: a shard that seats a player
+        into a game it runs takes her connection from whichever shard was holding it, and
+        this is the whole of what changes. The held messages come back in the order they
+        were said, which is the order they must be sent in.
+        """
+        self._owner[conn_id] = shard_id
+        return self._held.pop(conn_id, [])
+
     def close(self, conn_id: str) -> List[str]:
         """Forget a socket, and report the rooms this gateway no longer needs.
 
@@ -58,6 +84,8 @@ class ConnectionRouter:
         socket that closes twice is harmless.
         """
         self._sends.pop(conn_id, None)
+        self._owner.pop(conn_id, None)
+        self._held.pop(conn_id, None)
         room = self._room_of.pop(conn_id, None)
         if room is None:
             return []

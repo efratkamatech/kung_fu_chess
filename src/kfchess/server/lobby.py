@@ -328,8 +328,18 @@ class Lobby:
             return  # already searching
         self._seeking[client.username] = client_id
         match = self._matchmaker.seek(client.username, client.rating)
-        if match is not None:
-            self._start_game(self._seeking.pop(match.white), self._seeking.pop(match.black))
+        if match is None:
+            return
+        partner_id = self._seeking.pop(match.white, None)
+        if partner_id is None:
+            # She was waiting on another shard. Seating her from here is S4.3's job --
+            # it needs a shard chosen to run the game and both connections handed to it.
+            # Until then the honest thing is to put her back rather than drop her: she
+            # keeps waiting, and the next seeker who *can* seat her will.
+            self._matchmaker.seek(match.white, match.white_rating)
+            _log.info("matched %r on another shard; left in the queue", match.white)
+            return
+        self._start_game(partner_id, self._seeking.pop(match.black))
 
     def _stop_seeking(self, client: _Client) -> None:
         """Take a client out of the shared queue, if she is in it and has a name to be in

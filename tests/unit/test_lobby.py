@@ -838,3 +838,25 @@ def test_a_spectator_gets_no_seat_and_no_token():
     assert seat(watcher).color is None
     assert seat(watcher).seat_token == ""
     assert PlayerDirectory(store).seat_of("Sam") is None
+
+
+def test_a_partner_waiting_on_another_shard_is_left_in_the_queue():
+    """Until S4.3 can hand the match to a shard that holds both, neither is stranded.
+
+    The pairing is real — the queue is shared — but this lobby cannot seat somebody whose
+    connection it does not hold. Dropping her would be the easy wrong answer: she pressed
+    Play and is owed a game. So she goes back in, and the next seeker who can seat her will.
+    """
+    store = InMemoryKeyValueStore()
+    users = UserStore(":memory:")
+    here = Lobby(_rook_board, users, SharedState.on(store, "sh1"))
+    there = Lobby(_rook_board, users, SharedState.on(store, "sh2"))
+
+    away, away_id = login_ready(there, "Efrat")
+    there.receive(away_id, encode(Play()))  # she waits, on the other shard
+    mine, my_id = login_ready(here, "Dan")
+    here.receive(my_id, encode(Play()))  # matched with her -- and unseatable from here
+
+    assert of_type(mine, Seated) == []
+    assert of_type(away, Seated) == []
+    assert SharedState.on(store).matchmaker.is_waiting("Efrat")  # still there for the next one

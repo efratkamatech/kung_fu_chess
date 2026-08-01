@@ -25,7 +25,7 @@ plays a whole game in one thread. :func:`serve` is the irreducible async shell.
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from kfchess.bus import subjects
 from kfchess.bus.envelope import (
@@ -52,12 +52,26 @@ class Shard:
         shared: Optional[SharedState] = None,
     ) -> None:
         self._bus = bus
+        shared = shared if shared is not None else SharedState.on()
+        self._shard_id = shared.shard_id
         self._hub = Lobby(new_board, users, shared, to_room=self._publish)
         # conn_id -> the lobby's own client number, and the room that connection has
         # already been told to follow. Both are dropped when the socket closes.
         self._client_of: Dict[str, int] = {}
         self._following: Dict[str, int] = {}
-        self._bus.subscribe(subjects.LOBBY_CMD, self._on_client_event)
+        # The connections this shard has told a gateway are its own. A connection is in
+        # here at most once; the entry is what stops every later answer repeating a claim
+        # the gateway acted on long ago.
+        self._claimed: Set[str] = set()
+        # A socket nobody owns yet, announced to every shard at once. The queue group is
+        # what makes "every shard" mean "exactly one of them" -- without it, two shards
+        # would each claim the same connection and each run its own copy of her game.
+        self._bus.subscribe(
+            subjects.LOBBY_CMD, self._on_client_event, queue_group=subjects.SHARD_GROUP
+        )
+        # And everything from the connections this shard already owns, addressed to it
+        # by name. No group here: these are nobody else's to answer.
+        self._bus.subscribe(subjects.shard_cmd(self._shard_id), self._on_client_event)
 
     # --- what the gateways report ---------------------------------------------
 
@@ -67,6 +81,10 @@ class Shard:
         if event.kind is ClientEventKind.CONNECTED:
             self._client_of[event.conn_id] = self._hub.connect(self._sender(event.conn_id))
             _log.info("connection %s registered", event.conn_id)
+            # Nothing to say to her yet -- she has not spoken. But her gateway has to be
+            # told where to send it when she does, so an empty envelope goes back
+            # carrying only the claim.
+            self._answer(event.conn_id, "")
         elif event.kind is ClientEventKind.MESSAGE:
             client_id = self._client_of.get(event.conn_id)
             if client_id is not None:  # it closed before this arrived
@@ -78,6 +96,7 @@ class Shard:
         """A socket closed. Whether that matters is the lobby's to decide: a player
         dropping starts a resign countdown, a spectator leaving is nothing at all."""
         self._following.pop(conn_id, None)
+        self._claimed.discard(conn_id)
         client_id = self._client_of.pop(conn_id, None)
         if client_id is not None:
             self._hub.disconnect(client_id)
@@ -89,12 +108,40 @@ class Shard:
         """The lobby's ``send`` for one connection: publish to that connection's mailbox."""
 
         def send(text: str) -> None:
-            self._bus.publish(
-                subjects.connection(conn_id),
-                encode(ToClient(text, self._room_to_follow(conn_id))),
-            )
+            self._answer(conn_id, text)
 
         return send
+
+    def _answer(self, conn_id: str, text: str) -> None:
+        """Say something to one connection, and say what changed about it while we are here.
+
+        The three parts of the envelope answer three different questions and are computed
+        the same way: each is filled in only the once, on the first message where it has
+        become true, so a game in progress costs one field and two ``None``s per delta.
+        """
+        self._bus.publish(
+            subjects.connection(conn_id),
+            encode(
+                ToClient(
+                    text,
+                    self._room_to_follow(conn_id),
+                    self._claim_for(conn_id),
+                )
+            ),
+        )
+
+    def _claim_for(self, conn_id: str) -> Optional[str]:
+        """This shard's name, the first time it answers a connection; then ``None``.
+
+        Answering a connection at all means owning it: either it has just arrived out of
+        the queue group, or this shard has just seated the player into a game it runs and
+        is taking her over from whoever was holding her. Both are the same sentence to a
+        gateway, and neither needs the other shard to be consulted or even to exist.
+        """
+        if conn_id in self._claimed:
+            return None
+        self._claimed.add(conn_id)
+        return self._shard_id
 
     def _room_to_follow(self, conn_id: str) -> Optional[str]:
         """The room this connection has just been put in and not yet been told about.

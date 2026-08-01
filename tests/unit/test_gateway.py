@@ -26,27 +26,44 @@ def a_socket():
     return received.append, received
 
 
-def events(bus):
-    """Every ClientEvent this gateway put on the pre-room channel."""
+def events(bus, shard_id="sh1"):
+    """Every ClientEvent this gateway sent about a connection this shard owns."""
+    return [
+        decode_client_event(payload)
+        for payload in bus.sent_to(subjects.shard_cmd(shard_id))
+    ]
+
+
+def announcements(bus):
+    """Every ClientEvent put on the channel for connections nobody owns yet."""
     return [decode_client_event(payload) for payload in bus.sent_to(subjects.LOBBY_CMD)]
 
 
-def answer(bus, conn_id, text, follow_room=None):
+def answer(bus, conn_id, text, follow_room=None, claim=None):
     """The shard replying to one connection."""
-    bus.publish(subjects.connection(conn_id), encode(ToClient(text, follow_room)))
+    bus.publish(
+        subjects.connection(conn_id), encode(ToClient(text, follow_room, claim))
+    )
+
+
+def claimed(gateway, bus, shard_id="sh1"):
+    """A connection whose gateway has been told which shard owns it."""
+    conn_id = gateway.connect(a_socket()[0])
+    answer(bus, conn_id, "", claim=shard_id)
+    return conn_id
 
 
 # --- sockets -> the bus -------------------------------------------------------
 
-def test_opening_a_socket_is_reported_to_the_shard():
+def test_opening_a_socket_is_announced_to_whichever_shard_is_free():
     gateway, bus = a_gateway()
     conn_id = gateway.connect(a_socket()[0])
-    assert events(bus) == [ClientEvent(ClientEventKind.CONNECTED, conn_id)]
+    assert announcements(bus) == [ClientEvent(ClientEventKind.CONNECTED, conn_id)]
 
 
 def test_what_a_client_says_is_forwarded_verbatim_and_unread():
     gateway, bus = a_gateway()
-    conn_id = gateway.connect(a_socket()[0])
+    conn_id = claimed(gateway, bus)
 
     gateway.receive(conn_id, '{"type": "move", "cmd": "WRa1a3"}')
 
@@ -55,13 +72,23 @@ def test_what_a_client_says_is_forwarded_verbatim_and_unread():
     )
 
 
-def test_a_socket_closing_is_reported_too():
+def test_a_socket_closing_is_reported_to_its_owner():
+    gateway, bus = a_gateway()
+    conn_id = claimed(gateway, bus)
+
+    gateway.disconnect(conn_id)
+
+    assert events(bus)[-1] == ClientEvent(ClientEventKind.DISCONNECTED, conn_id)
+
+
+def test_a_socket_closing_before_anyone_claimed_it_is_announced_instead():
+    """It may still matter -- somebody has to forget the connect they just registered."""
     gateway, bus = a_gateway()
     conn_id = gateway.connect(a_socket()[0])
 
     gateway.disconnect(conn_id)
 
-    assert events(bus)[-1] == ClientEvent(ClientEventKind.DISCONNECTED, conn_id)
+    assert announcements(bus)[-1] == ClientEvent(ClientEventKind.DISCONNECTED, conn_id)
 
 
 def test_the_gateway_counts_its_sockets():
@@ -187,3 +214,62 @@ def test_a_second_room_is_followed_independently():
 
     assert here_received[-1] == "game four"
     assert there_received == ["seated"]
+
+
+# --- who owns a connection ----------------------------------------------------
+
+def test_nothing_is_forwarded_until_a_shard_claims_the_connection():
+    """The race the claim exists to lose safely: a login sent before anyone answered."""
+    gateway, bus = a_gateway()
+    conn_id = gateway.connect(a_socket()[0])
+
+    gateway.receive(conn_id, '{"type": "login"}')
+
+    assert events(bus) == []          # not sent to a shard...
+    assert len(announcements(bus)) == 1  # ...and not broadcast to all of them either
+
+
+def test_what_was_held_is_forwarded_the_moment_the_claim_arrives():
+    gateway, bus = a_gateway()
+    conn_id = gateway.connect(a_socket()[0])
+    gateway.receive(conn_id, '{"type": "login"}')
+    gateway.receive(conn_id, '{"type": "play"}')
+
+    answer(bus, conn_id, "", claim="sh1")
+
+    assert [event.text for event in events(bus)] == ['{"type": "login"}', '{"type": "play"}']
+
+
+def test_a_claim_carrying_no_text_says_nothing_to_the_socket():
+    gateway, bus = a_gateway()
+    send, received = a_socket()
+    conn_id = gateway.connect(send)
+
+    answer(bus, conn_id, "", claim="sh1")
+
+    assert received == []  # the player is not shown an empty message
+
+
+def test_a_seating_shard_takes_the_connection_over_from_the_one_holding_it():
+    """The one thing that moves a connection: being seated in a game somebody else runs."""
+    gateway, bus = a_gateway()
+    conn_id = claimed(gateway, bus, "sh1")
+
+    answer(bus, conn_id, '{"type": "seated"}', follow_room="7", claim="sh2")
+    gateway.receive(conn_id, '{"type": "move", "cmd": "WRa1a3"}')
+
+    assert events(bus, "sh1") == []  # her old shard hears nothing more from her
+    assert [event.text for event in events(bus, "sh2")] == [
+        '{"type": "move", "cmd": "WRa1a3"}'
+    ]
+
+
+def test_a_connection_that_closed_before_its_claim_forgets_what_it_held():
+    gateway, bus = a_gateway()
+    conn_id = gateway.connect(a_socket()[0])
+    gateway.receive(conn_id, '{"type": "login"}')
+
+    gateway.disconnect(conn_id)
+    answer(bus, conn_id, "", claim="sh1")  # the claim arrives after she is gone
+
+    assert [event.kind for event in events(bus, "sh1")] == []

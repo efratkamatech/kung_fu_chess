@@ -101,3 +101,81 @@ def test_the_bus_records_everything_for_a_test_to_read_back():
     assert bus.published == [("conn.gw1.1", "to one client"), ("room.4.delta", "to a room")]
     assert bus.sent_to(subjects.gateway_inbox("gw1")) == ["to one client"]
     assert bus.sent_to("room.>") == ["to a room"]
+
+
+# --- queue groups: sharing the work instead of each getting a copy -------------
+
+def test_a_queue_group_delivers_to_exactly_one_member():
+    """Why a second shard is possible at all: without this, both run every game."""
+    bus = InProcessMessageBus()
+    heard = []
+    bus.subscribe("lobby.cmd", lambda s, p: heard.append(("sh1", p)), queue_group="shards")
+    bus.subscribe("lobby.cmd", lambda s, p: heard.append(("sh2", p)), queue_group="shards")
+
+    bus.publish("lobby.cmd", "hello")
+
+    assert len(heard) == 1
+
+
+def test_a_queue_group_takes_turns():
+    """Shared means shared. Always answering with the first member would hide a bug."""
+    bus = InProcessMessageBus()
+    heard = []
+    for name in ("sh1", "sh2", "sh3"):
+        bus.subscribe(
+            "lobby.cmd",
+            lambda s, p, name=name: heard.append(name),
+            queue_group="shards",
+        )
+
+    for _ in range(6):
+        bus.publish("lobby.cmd", "x")
+
+    assert heard == ["sh1", "sh2", "sh3", "sh1", "sh2", "sh3"]
+
+
+def test_a_lone_member_of_a_group_gets_everything():
+    """The solo server, and any deployment with one shard: nothing is load balanced away."""
+    bus = InProcessMessageBus()
+    heard = []
+    bus.subscribe("lobby.cmd", lambda s, p: heard.append(p), queue_group="shards")
+
+    bus.publish("lobby.cmd", "one")
+    bus.publish("lobby.cmd", "two")
+
+    assert heard == ["one", "two"]
+
+
+def test_subscriptions_outside_a_group_still_all_get_a_copy():
+    """Two gateways following one room is a fan-out, not a queue. Both must hear it."""
+    bus = InProcessMessageBus()
+    heard = []
+    bus.subscribe("room.7.delta", lambda s, p: heard.append("gw1"))
+    bus.subscribe("room.7.delta", lambda s, p: heard.append("gw2"))
+
+    bus.publish("room.7.delta", "a move")
+
+    assert heard == ["gw1", "gw2"]
+
+
+def test_a_group_and_a_plain_subscriber_on_the_same_subject_coexist():
+    bus = InProcessMessageBus()
+    heard = []
+    bus.subscribe("lobby.cmd", lambda s, p: heard.append("watcher"))
+    bus.subscribe("lobby.cmd", lambda s, p: heard.append("sh1"), queue_group="shards")
+    bus.subscribe("lobby.cmd", lambda s, p: heard.append("sh2"), queue_group="shards")
+
+    bus.publish("lobby.cmd", "x")
+
+    assert sorted(heard) == ["sh1", "watcher"]
+
+
+def test_unsubscribing_drops_a_group_member_too():
+    bus = InProcessMessageBus()
+    heard = []
+    bus.subscribe("lobby.cmd", lambda s, p: heard.append("sh1"), queue_group="shards")
+
+    bus.unsubscribe("lobby.cmd")
+    bus.publish("lobby.cmd", "x")
+
+    assert heard == []

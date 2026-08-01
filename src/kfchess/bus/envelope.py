@@ -76,17 +76,32 @@ class ToClient:
 
     There is no matching "stop": a client stops following a room when its socket closes,
     and nothing in the game lets someone walk out of a room without doing that.
+
+    ``claim`` is the same idea applied to the connection itself: *send this one's
+    messages to me from now on*. A shard sets it when it first answers a connection, and
+    again when it seats one another shard was holding — which is the only way ownership
+    ever moves. The gateway obeys it without knowing what a shard is for, exactly as it
+    follows a room without knowing what a room is.
+
+    ``text`` may be **empty**, and that is not a degenerate case: it is how a shard says
+    "you are mine" about a connection that has nothing to be told yet. The gateway sends
+    nothing to the socket when it is.
     """
 
     text: str
     follow_room: Optional[str] = None
+    claim: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return {"text": self.text, "follow_room": self.follow_room}
+        return {
+            "text": self.text,
+            "follow_room": self.follow_room,
+            "claim": self.claim,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> "ToClient":
-        return cls(data["text"], data.get("follow_room"))
+        return cls(data["text"], data.get("follow_room"), data.get("claim"))
 
 
 # The two envelopes are told apart by the subject they arrive on, never by sniffing their

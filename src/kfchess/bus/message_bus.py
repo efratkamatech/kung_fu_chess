@@ -29,7 +29,7 @@ same :func:`matches`, so a subscription that works in one process works over NAT
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 # A subscriber is handed the concrete subject a message arrived on as well as the
 # payload: a wildcard subscription such as ``conn.gw1.>`` is answered by many subjects,
@@ -68,21 +68,52 @@ class InProcessMessageBus:
     """
 
     def __init__(self) -> None:
-        self._subscriptions: List[Tuple[str, Handler]] = []
+        self._subscriptions: List[Tuple[str, Handler, Optional[str]]] = []
         # Everything ever published, in order, for a test that wants to assert on the
         # wire itself rather than on what some handler did with it.
         self.published: List[Tuple[str, str]] = []
+        # Which member of each queue group is next in turn, so the same group does not
+        # hand everything to whoever subscribed first.
+        self._next_in_group: Dict[str, int] = {}
 
     def publish(self, subject: str, payload: str) -> None:
-        """Deliver ``payload`` to every subscription whose pattern matches ``subject``."""
+        """Deliver ``payload`` to every matching subscription, one per queue group."""
         self.published.append((subject, payload))
-        for pattern, handler in list(self._subscriptions):
-            if matches(pattern, subject):
-                handler(subject, payload)
+        for _, handler, _ in self._chosen(subject):
+            handler(subject, payload)
 
-    def subscribe(self, pattern: str, handler: Handler) -> None:
-        """Call ``handler(subject, payload)`` for every message matching ``pattern``."""
-        self._subscriptions.append((pattern, handler))
+    def _chosen(self, subject: str):
+        """Who receives this message: everyone matching, but one member per queue group.
+
+        Whose turn it is rotates. Always calling the first member would make "they share
+        the work" a claim no test could catch out — one shard would answer everything and
+        the second would look idle rather than broken.
+        """
+        matching = [
+            subscription
+            for subscription in self._subscriptions
+            if matches(subscription[0], subject)
+        ]
+        for group in {sub[2] for sub in matching if sub[2] is not None}:
+            members = [sub for sub in matching if sub[2] == group]
+            turn = self._next_in_group.get(group, 0) % len(members)
+            self._next_in_group[group] = turn + 1
+            matching = [sub for sub in matching if sub[2] != group]
+            matching.insert(0, members[turn])
+        return matching
+
+    def subscribe(
+        self, pattern: str, handler: Handler, queue_group: Optional[str] = None
+    ) -> None:
+        """Call ``handler(subject, payload)`` for every message matching ``pattern``.
+
+        Subscriptions sharing a ``queue_group`` share the *work* instead of each getting
+        a copy: exactly one of them is called per message. That is what lets a second
+        shard exist at all — every shard subscribes to the same "somebody deal with this
+        connection" subject, and without a group each would run its own copy of every
+        game that followed.
+        """
+        self._subscriptions.append((pattern, handler, queue_group))
 
     def unsubscribe(self, pattern: str) -> None:
         """Drop every subscription on ``pattern``; unknown patterns are ignored.
@@ -92,9 +123,9 @@ class InProcessMessageBus:
         pure waste — and at ten thousand rooms per shard, waste that adds up.
         """
         self._subscriptions = [
-            (subscribed, handler)
-            for subscribed, handler in self._subscriptions
-            if subscribed != pattern
+            subscription
+            for subscription in self._subscriptions
+            if subscription[0] != pattern
         ]
 
     def sent_to(self, pattern: str) -> List[str]:
@@ -132,9 +163,11 @@ class NatsMessageBus:  # pragma: no cover  (a live NATS server; the in-process o
     def publish(self, subject: str, payload: str) -> None:
         self._pending.put_nowait(("publish", subject, payload))
 
-    def subscribe(self, pattern: str, handler: Handler) -> None:
+    def subscribe(
+        self, pattern: str, handler: Handler, queue_group: Optional[str] = None
+    ) -> None:
         self._handlers[pattern] = handler
-        self._pending.put_nowait(("subscribe", pattern, ""))
+        self._pending.put_nowait(("subscribe", pattern, queue_group or ""))
 
     def unsubscribe(self, pattern: str) -> None:
         self._pending.put_nowait(("unsubscribe", pattern, ""))
@@ -146,18 +179,21 @@ class NatsMessageBus:  # pragma: no cover  (a live NATS server; the in-process o
             if operation == "publish":
                 await self._connection.publish(subject, payload.encode("utf-8"))
             elif operation == "subscribe":
-                await self._open(subject)
+                await self._open(subject, payload)
             else:
                 for subscription in self._subscriptions.pop(subject, []):
                     await subscription.unsubscribe()
 
-    async def _open(self, pattern: str) -> None:
+    async def _open(self, pattern: str, queue_group: str) -> None:
         handler = self._handlers[pattern]
 
         async def deliver(message) -> None:
             handler(message.subject, message.data.decode("utf-8"))
 
-        subscription = await self._connection.subscribe(pattern, cb=deliver)
+        # NATS calls it `queue`; an empty one means an ordinary fan-out subscription.
+        subscription = await self._connection.subscribe(
+            pattern, queue=queue_group, cb=deliver
+        )
         self._subscriptions.setdefault(pattern, []).append(subscription)
 
 

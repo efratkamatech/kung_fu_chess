@@ -12,6 +12,7 @@ what the players see, and the shard must still refuse a move from someone who ha
 """
 
 from kfchess.bus import subjects
+from kfchess.bus.envelope import decode_to_client
 from kfchess.bus.message_bus import InProcessMessageBus
 from kfchess.gateway.app import Gateway
 from kfchess.model.board import Board
@@ -19,6 +20,7 @@ from kfchess.model.color import Color
 from kfchess.model.piece import Piece
 from kfchess.model.piece_type import standard_piece_types
 from kfchess.services.shared import SharedState
+from kfchess.services.store import InMemoryKeyValueStore
 from kfchess.server.shard import Shard
 from kfchess.server.user_store import UserStore
 from kfchess.shared.codes import RejectReason
@@ -255,3 +257,72 @@ def test_the_right_seat_token_gets_the_seat_back_across_the_bus():
 
     assert returner.of_type(Welcome)[-1].color is Color.BLACK
     assert returner.of_type(State) != []  # and the board arrives on the new connection
+
+
+# --- S4: two shards on one bus -------------------------------------------------
+
+def two_shards():
+    """One bus, one gateway, two shards — sharing accounts and shared state, as deployed."""
+    bus = InProcessMessageBus()
+    gateway = Gateway(bus, "gw1")
+    users = UserStore(":memory:")
+    store = InMemoryKeyValueStore()
+    first = Shard(bus, a_board, users, SharedState.on(store, "sh1"))
+    second = Shard(bus, a_board, users, SharedState.on(store, "sh2"))
+    return bus, gateway, first, second
+
+
+def owner_of(bus, conn_id):
+    """Which shard claimed this connection, read off the wire."""
+    claims = [
+        decode_to_client(payload).claim
+        for payload in bus.sent_to(subjects.connection(conn_id))
+        if decode_to_client(payload).claim is not None
+    ]
+    return claims[-1] if claims else None
+
+
+def test_exactly_one_shard_claims_each_connection():
+    """Without the queue group both would, and both would run a copy of her game."""
+    bus, gateway, _, _ = two_shards()
+
+    client = Client(gateway)
+
+    claims = [
+        decode_to_client(payload).claim
+        for payload in bus.sent_to(subjects.connection(client.conn_id))
+    ]
+    assert [claim for claim in claims if claim is not None] == [owner_of(bus, client.conn_id)]
+
+
+def test_two_connections_are_shared_between_the_shards():
+    bus, gateway, _, _ = two_shards()
+
+    first, second = Client(gateway), Client(gateway)
+
+    assert {owner_of(bus, first.conn_id), owner_of(bus, second.conn_id)} == {"sh1", "sh2"}
+
+
+def test_everything_a_client_says_goes_to_the_shard_that_claimed_her():
+    """The stickiness the whole design rests on: her login and her Play meet one shard."""
+    bus, gateway, _, _ = two_shards()
+    client = Client(gateway)
+    mine = owner_of(bus, client.conn_id)
+    theirs = "sh2" if mine == "sh1" else "sh1"
+
+    client.send(Login("Efrat", "pw"))
+    client.send(Play())
+
+    assert len(bus.sent_to(subjects.shard_cmd(mine))) == 2
+    assert bus.sent_to(subjects.shard_cmd(theirs)) == []
+
+
+def test_a_player_seated_by_one_shard_is_unknown_to_the_other():
+    """Two shards, two lobbies, no shared client list — and none needed."""
+    bus, gateway, _, _ = two_shards()
+    client = Client(gateway)
+
+    client.send(Login("Efrat", "pw"))
+
+    assert client.of_type(Welcome)[-1].rating == 1200  # answered exactly once
+    assert len(client.of_type(Welcome)) == 1

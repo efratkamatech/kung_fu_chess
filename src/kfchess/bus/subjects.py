@@ -25,19 +25,33 @@ an id. The layout is three groups:
   with two players costs. Nothing here distinguishes a player from a watcher, because at
   this layer there is no difference: the difference is that one of them may also publish
   to ``lobby.cmd``, and the shard is what refuses the other.
-- ``lobby.cmd`` — everything a client says before it belongs to a room: log in, look for
-  a game, open or join a private room, and the bare fact that a socket opened or closed.
+- ``lobby.cmd`` — a socket has just opened and belongs to nobody yet. **Every shard
+  subscribes to this one in the same queue group**, so exactly one of them receives each
+  new connection and claims it; the rest never hear of it. This is the only subject in
+  the system that is answered by "whoever is free" rather than by name.
+- ``shard.{shard_id}.cmd`` — everything that connection says afterwards. The shard that
+  claimed it told the gateway so, and the gateway has published there ever since.
 
-That last one is **temporary and deliberately so.** It works because S2 has exactly one
-shard; with several, every shard would receive every login. S3 dissolves it — login goes
-to Auth, seeking goes to the Matchmaker, room ids come from the Rooms service — and this
-constant disappears with the ``Lobby`` that answers it today.
+The pairing of those last two is what makes a second shard possible. It used to be one
+subject for both jobs, which worked exactly as long as there was one shard: with two,
+each would have received every login and run its own copy of every game that followed.
+
+A connection's owner can **change hands**, and exactly one thing changes it: being seated
+in a game that another shard is running. The shard that seats her claims her in the same
+breath, and from then on her moves arrive where her game is. Nothing else moves a
+connection, and no shard ever asks another for one.
 """
 
 from __future__ import annotations
 
-# The pre-room channel: client -> the one shard. See the note above; S3 removes it.
+# Where a connection nobody owns yet is announced. See the note above.
 LOBBY_CMD = "lobby.cmd"
+
+# The queue group every shard subscribes to LOBBY_CMD under. A group name is part of the
+# wire contract exactly as a subject is -- two shards that spelled it differently would
+# each get their own copy, which is the bug this exists to prevent -- so it lives here
+# with the subjects rather than in whichever file happens to subscribe.
+SHARD_GROUP = "shards"
 
 # NATS wildcards: ``*`` matches one token, ``>`` matches the rest of the subject.
 _MATCH_REST = ">"
@@ -50,6 +64,15 @@ def connection(conn_id: str) -> str:
     which one, so addressing a reply is a prefix and never a lookup.
     """
     return f"conn.{conn_id}"
+
+
+def shard_cmd(shard_id: str) -> str:
+    """Everything from the connections one shard has claimed.
+
+    Addressed by name, not by availability: the whole point is that the same shard keeps
+    receiving the same connection, because it is the one holding what it knows about her.
+    """
+    return f"shard.{shard_id}.cmd"
 
 
 def gateway_inbox(gateway_id: str) -> str:

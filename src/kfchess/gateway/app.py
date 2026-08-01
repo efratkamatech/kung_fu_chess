@@ -60,8 +60,18 @@ class Gateway:
         return conn_id
 
     def receive(self, conn_id: str, text: str) -> None:
-        """Forward what a client said, verbatim and unread."""
-        self._report(ClientEventKind.MESSAGE, conn_id, text)
+        """Forward what a client said, verbatim and unread, to whoever owns her.
+
+        Held instead if nobody owns her yet — the socket has only just opened and the
+        claim is still in flight. Answering her first two messages from two different
+        shards would be worse than a moment's delay: the second one would not know who
+        she is.
+        """
+        owner = self._router.owner(conn_id)
+        if owner is None:
+            self._router.hold(conn_id, text)
+            return
+        self._send_to_shard(owner, ClientEventKind.MESSAGE, conn_id, text)
 
     def disconnect(self, conn_id: str) -> None:
         """Forget a socket, drop any room nobody here is left watching, and say so.
@@ -70,26 +80,48 @@ class Gateway:
         mattered — a player dropping starts a resign countdown, a spectator leaving is
         nothing at all — and that is a decision this side is not entitled to make.
         """
+        owner = self._router.owner(conn_id)
         for room in self._router.close(conn_id):
             self._bus.unsubscribe(subjects.room_inbox(room))
             _log.info("no longer following room %s", room)
         _log.info("connection %s closed", conn_id)
-        self._report(ClientEventKind.DISCONNECTED, conn_id)
+        if owner is None:
+            self._report(ClientEventKind.DISCONNECTED, conn_id)  # nobody claimed her
+        else:
+            self._send_to_shard(owner, ClientEventKind.DISCONNECTED, conn_id)
 
     def _report(self, kind: ClientEventKind, conn_id: str, text: str = "") -> None:
+        """Announce a connection nobody owns. Exactly one shard will pick it up."""
         self._bus.publish(subjects.LOBBY_CMD, encode(ClientEvent(kind, conn_id, text)))
+
+    def _send_to_shard(
+        self, shard_id: str, kind: ClientEventKind, conn_id: str, text: str = ""
+    ) -> None:
+        """Send to the shard that owns this connection, by name."""
+        self._bus.publish(
+            subjects.shard_cmd(shard_id), encode(ClientEvent(kind, conn_id, text))
+        )
 
     # --- the bus -> sockets ---------------------------------------------------
 
     def _on_reply(self, subject: str, payload: str) -> None:
-        """A message for one of this gateway's connections."""
+        """A message for one of this gateway's connections, and what to do about it."""
         conn_id = subjects.connection_of(subject)
         reply = decode_to_client(payload)
+        if reply.claim is not None:
+            self._claim(conn_id, reply.claim)
         if reply.follow_room is not None:
             self._follow(conn_id, reply.follow_room)
         send = self._router.to_connection(conn_id)
-        if send is not None:  # it may have closed while the answer was in flight
+        if send is not None and reply.text:  # it may have closed; and a claim carries no text
             send(reply.text)
+
+    def _claim(self, conn_id: str, shard_id: str) -> None:
+        """Note who owns this connection now, and forward whatever was said meanwhile."""
+        held = self._router.claim(conn_id, shard_id)
+        _log.info("connection %s belongs to %s", conn_id, shard_id)
+        for text in held:
+            self._send_to_shard(shard_id, ClientEventKind.MESSAGE, conn_id, text)
 
     def _follow(self, conn_id: str, room: str) -> None:
         """Start following a room's broadcasts, if nobody here is following it yet."""

@@ -60,14 +60,20 @@ def wall_clock_ms() -> int:
 class Match:
     """Two paired seekers, by name. ``white`` was already waiting; ``black`` just sought.
 
-    Named rather than numbered, unlike the single-process
-    :class:`~kfchess.server.matchmaker.Match`: a client id means something only inside the
-    process that issued it, and the whole point of this queue is that the two players may
-    be about to be seated by a shard that has met neither of them.
+    Named rather than numbered: a client id means something only inside the process that
+    issued it, and the whole point of this queue is that the two players may be about to
+    be seated by a shard that has met neither of them.
+
+    Both ratings travel with them for the same reason. The shard that ends up running the
+    game may never have spoken to either player, and it has to put a number beside each
+    name on the board; going back to the database for something the queue was already
+    sorted by would be a round trip to learn what we just read.
     """
 
     white: str
     black: str
+    white_rating: int = 0
+    black_rating: int = 0
 
 
 @dataclass(frozen=True)
@@ -114,7 +120,7 @@ class Matchmaker:
         partner = self._closest_waiting(username, rating)
         if partner is not None:
             self._remove(partner)
-            return Match(white=partner.username, black=username)
+            return Match(partner.username, username, partner.rating, rating)
         # Whatever this player left in the queue last time goes first. She may have given
         # up waiting and come back: her old entry is still in the ranking (nothing sweeps
         # it), and a player listed twice under two arrival times is one somebody can be

@@ -30,7 +30,7 @@ def test_two_seekers_in_range_are_paired_earliest_as_white():
     matchmaker, _, _ = a_matchmaker()
     matchmaker.seek("Efrat", 1200)
 
-    assert matchmaker.seek("Dan", 1200) == Match(white="Efrat", black="Dan")
+    assert matchmaker.seek("Dan", 1200) == Match("Efrat", "Dan", 1200, 1200)
 
 
 def test_the_paired_partner_leaves_the_queue():
@@ -219,7 +219,7 @@ def test_a_player_who_came_back_is_matched_at_her_new_arrival_time():
     now[0] += MATCH_TIMEOUT_MS
     matchmaker.seek("Efrat", 1200)
 
-    assert matchmaker.seek("Dan", 1200) == Match(white="Efrat", black="Dan")
+    assert matchmaker.seek("Dan", 1200) == Match("Efrat", "Dan", 1200, 1200)
 
 
 # --- the property a per-process queue could not have ---------------------------
@@ -237,7 +237,7 @@ def test_a_player_waiting_on_one_shard_is_found_by_a_seeker_on_another():
     assert here.seek("Efrat", 1200) is None  # she waits, on this shard
     now[0] += 1
 
-    assert there.seek("Dan", 1210) == Match(white="Efrat", black="Dan")
+    assert there.seek("Dan", 1210) == Match("Efrat", "Dan", 1200, 1210)
     assert not here.is_waiting("Efrat")  # and the shard she waited on agrees she is gone
 
 
@@ -254,4 +254,4 @@ def test_the_closest_partner_wins_across_shards_too():
     shards[1].seek("Near", 1150)
     now[0] += 1
 
-    assert shards[2].seek("Dan", 1200) == Match(white="Near", black="Dan")
+    assert shards[2].seek("Dan", 1200) == Match("Near", "Dan", 1150, 1200)
