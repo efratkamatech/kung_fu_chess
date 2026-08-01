@@ -428,13 +428,31 @@ becomes a real service, which is S3.
 
 ### Files
 
-**New: `src/kfchess/services/matchmaker_service.py`** — wraps the existing
+> **Built.** Names as built: `services/matchmaker.py`, `services/rooms.py`,
+> `services/directory.py`, plus two the plan did not foresee — `services/store.py` (the
+> store interface, in two implementations) and `services/shared.py` (`SharedState`, the
+> single line where the two deployments part company). The old `server/matchmaker.py` and
+> `server/room_manager.py` were **deleted**, not wrapped: every one of their tests moved
+> across, so the behaviour is held to the same standard by the same cases.
+
+**New: `src/kfchess/services/matchmaker.py`** — wraps the existing
 `matchmaker.py` logic over Redis sorted sets. **The pairing rules do not change:** the
 `MATCH_ELO_RANGE = 100` window, closest rating wins, ties to the longest waiter. Only the
 storage and the search change — `ZRANGEBYSCORE` over the player's rating bucket and its
 neighbours, instead of a linear scan.
 
-**New: `src/kfchess/services/rooms_service.py`** — `RoomManager` over Redis. The
+> **Built with one change the plan did not anticipate: nothing sweeps the queue.**
+> `Matchmaker.tick` is gone. Counting down every waiter's patience twenty times a second
+> is the one per-tick cost that grows with the number of people *not* playing — worst
+> exactly when a lobby is busiest — so the client gives up on its own clock at the same
+> `MATCH_TIMEOUT_MS` and reads it as the same "no opponent". A stale entry is removed by
+> the next search that trips over it, and a player who returns replaces her own entry
+> rather than appearing twice. Rating buckets (`MATCH_BUCKET_SIZE`) were **not** built:
+> the search is already logarithmic, and buckets would multiply every seek by the five
+> of them a ±100 window straddles. That is a trade to make when a measurement says the
+> key is hot.
+
+**New: `src/kfchess/services/rooms.py`** — `RoomManager` over Redis. The
 collision check becomes one atomic operation:
 
 ```python
@@ -458,6 +476,34 @@ check leaks into the gateway replicas.
 **Changed: `src/kfchess/server/lobby.py`** — after this stage it is only the shard's room
 manager. Login, matchmaking, and room creation have all left.
 
+> **Built, with the reconnect flow settled.** A seat is recorded when the lobby seats a
+> player and its token is sent to *that connection only* — never to the room, where
+> everyone already knows her username. Two ways back in, both verified: logging in with a
+> password reclaims the seat and hands the token back for next time, and the new
+> `protocol.Resume(username, seat_token)` reclaims it for the price of a lookup instead of
+> a hundred thousand hash rounds — which is what a reconnect on a bad network actually
+> costs. A refusal is one answer (`RejectReason.BAD_SEAT`) for all four ways it can fail,
+> so a caller cannot map the seats it does not hold.
+>
+> The lobby did *not* dissolve as far as the plan expected, because Auth has not been
+> split out: login still authenticates in the shard. That is what makes the token check
+> trivially satisfiable today and genuinely load-bearing once Auth is its own service.
+
+**New (not in the plan): `src/kfchess/server/solo.py` — the local deployment.**
+
+The split cost something nobody decided to spend: playing at home came to mean bringing
+up a broker, a cache and a database first. `python server_main.py --solo` runs the same
+`Gateway`, the same `Shard` and the same `Lobby` in one process, over
+`InProcessMessageBus` and `InMemoryKeyValueStore`.
+
+It is deliberately **not** a second implementation. Every shared service is injected and
+defaults to an in-process one, so there is no local-mode branch in the game, the lobby,
+the rooms or the matchmaking — only two objects, chosen in `solo.py` and in
+`shard.serve`. A bug found in one deployment is a bug in both.
+`tests/unit/test_local_boundary.py` is the floor under it: the layers the offline game is
+built from may not import a server, a service, or a client library, so
+`python graphics_main.py` cannot acquire an infrastructure dependency by accident.
+
 ### Config additions
 
 ```python
@@ -468,11 +514,26 @@ SEAT_TOKEN_BYTES = 16       # reconnect token; username alone is not proof of id
 
 ### Exit criteria
 
-- [ ] Matchmaking works with two shards running — the two players may land on either
-- [ ] Reconnect works after switching gateways
-- [ ] A wrong `seat_token` is rejected **by the shard** — the WS Gateway relays it
+- [x] The waiting queue is one pool across shards — a player waiting on one is found by
+      a seeker on another, and the closest-rating rule still decides
+      (`test_matchmaker_service`)
+- [x] A wrong `seat_token` is rejected **by the shard** — the WS Gateway relays it
       without inspecting it, and never reads the directory itself
-- [ ] Room ids are unique across shards under a concurrent-creation test
+      (`test_gateway_shard_e2e`, and `test_gateway_boundary` forbids the import outright)
+- [x] Room ids are unique across shards under a concurrent-creation test — fifty shards
+      drawing from an alphabet of five, no id handed out twice (`test_rooms_service`)
+- [x] Reconnect works from a new connection, by password and by token
+      (`test_lobby`, `test_gateway_shard_e2e`)
+- [x] The game runs with no infrastructure at all: `python server_main.py --solo`,
+      verified live over two real sockets (`test_solo_server`)
+
+**Two criteria moved to S4, and the reason is worth writing down.** The original list
+asked for matchmaking and reconnect *with two shards running*, and that cannot be shown
+here: `subjects.LOBBY_CMD` is still a single fan-out subject, so a second shard would
+receive every connection event the first one does and run a duplicate of every game. The
+missing piece is **routing**, which is S4's whole subject. What S3 owed — one queue, one
+id space, one directory, all correct under concurrent access from several shards — is
+built and tested above; what it cannot do is start the second shard that would use them.
 
 ---
 
@@ -502,6 +563,20 @@ so a dead shard disappears from the pool by itself.
 - [ ] A spectator can join a room on **either** shard from **either** gateway
 - [ ] Killing one shard voids only its games; the other keeps playing
 - [ ] No ELO change results from a shard crash (games are only recorded on completion)
+- [ ] **Moved here from S3:** matchmaking works with two shards running — the two players
+      may land on either
+- [ ] **Moved here from S3:** reconnect works after switching gateways
+
+The last two were written as S3's, and they are not S3's to meet. S3 gave the shards one
+queue, one id space and one directory, all correct under concurrent access — but a second
+shard cannot be *started* until `lobby.cmd` stops being a single fan-out subject, or both
+shards run a duplicate of every game. Routing is this stage. The shared state they will
+route over is already there and already tested.
+
+**The first job of this stage is therefore addressing, not allocation:** a connection has
+to belong to one shard, so that `lobby.cmd` becomes `shard.{id}.cmd` and a gateway knows
+which one to publish to. The Allocator below is what makes that choice; the subject layout
+is what carries it.
 
 ### Risks
 
@@ -651,6 +726,20 @@ games, NATS between them. The gateway cannot import the game and a test enforces
 room's traffic is published once however many people are in it; and a gateway can die and
 be replaced without taking its games with it. 632 tests, 100% coverage, ruff clean.
 
+**Complete: S3.** The state that has to be true across shards left the processes that were
+keeping private copies of it: one waiting queue, one room-id space claimed with `SET NX`,
+one player directory that answers "where is she sitting" in a lookup instead of a search.
+A seat now carries a token, and the shard that minted it is the only thing that checks it.
+`server/matchmaker.py` and `server/room_manager.py` are gone rather than wrapped.
+
+Two things came out of S3 that were not in the plan. Nobody sweeps the waiting queue any
+more — patience is measured on each player's own client, because the sweep was the one
+per-tick cost that grew with the number of people *not* playing. And the game runs in one
+process again: `python server_main.py --solo`, no NATS, no Redis, no database server, no
+Docker. That is not a cut-down build. Every shared service is injected and defaults to an
+in-process implementation, so the same gateway, shard and lobby run both ways and only two
+objects underneath them differ. 729 tests, 100% coverage, ruff clean.
+
 **Open from both, and only these:** nobody has watched the **windowed** client against
 either build — S0 changed what is drawn between messages, and S1 changed where accounts
 live, and both were verified with headless clients over real sockets instead. Plus
@@ -660,4 +749,5 @@ live, and both were verified with headless clients over real sockets instead. Pl
 (`config.SERVER_LOG`), so `docker compose logs server` shows nothing. S5 already owns the
 logging change; a stream handler alongside the file one is the fix.
 
-**Next:** S3.
+**Next:** S4 — and its first job is addressing rather than allocation (see its exit
+criteria): while `lobby.cmd` is one subject for every shard, there can only be one shard.

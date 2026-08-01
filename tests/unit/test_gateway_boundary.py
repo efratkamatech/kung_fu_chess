@@ -21,7 +21,12 @@ GATEWAY = Path(__file__).resolve().parents[2] / "src" / "kfchess" / "gateway"
 # them. `shared` is allowed — the wire vocabulary is not the game — and so is `bus`,
 # which is how it speaks at all.
 FORBIDDEN = ("kfchess.engine", "kfchess.model", "kfchess.rules", "kfchess.movement",
-             "kfchess.server", "kfchess.observers", "kfchess.graphics", "kfchess.client")
+             "kfchess.server", "kfchess.observers", "kfchess.graphics", "kfchess.client",
+             # And, from S3, the shared state. A gateway that could read the directory
+             # could check a seat token, and then every replica of the thing built to be
+             # thrown away and replaced would be a place where security is decided. The
+             # shard checks tokens; this forwards a string it cannot read.
+             "kfchess.services", "redis")
 
 
 def imported_modules(path: Path):

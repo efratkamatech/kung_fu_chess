@@ -220,3 +220,38 @@ def test_a_player_who_came_back_is_matched_at_her_new_arrival_time():
     matchmaker.seek("Efrat", 1200)
 
     assert matchmaker.seek("Dan", 1200) == Match(white="Efrat", black="Dan")
+
+
+# --- the property a per-process queue could not have ---------------------------
+
+def test_a_player_waiting_on_one_shard_is_found_by_a_seeker_on_another():
+    """One pool, not one pool per process. This is the reason the queue moved.
+
+    Two shards with their own dictionaries would leave these two waiting side by side
+    for ever, each in a queue of one, however close their ratings.
+    """
+    _, store, now = a_matchmaker()
+    here = Matchmaker(store, now_ms=lambda: now[0])
+    there = Matchmaker(store, now_ms=lambda: now[0])
+
+    assert here.seek("Efrat", 1200) is None  # she waits, on this shard
+    now[0] += 1
+
+    assert there.seek("Dan", 1210) == Match(white="Efrat", black="Dan")
+    assert not here.is_waiting("Efrat")  # and the shard she waited on agrees she is gone
+
+
+def test_the_closest_partner_wins_across_shards_too():
+    """The pairing rule is a property of the queue, not of who is asking.
+
+    The two waiters are 149 apart, so neither pairs with the other on arrival and both
+    are still there when Dan seeks between them: one 99 above him, one 50 below.
+    """
+    _, store, now = a_matchmaker()
+    shards = [Matchmaker(store, now_ms=lambda: now[0]) for _ in range(3)]
+    shards[0].seek("Far", 1299)
+    now[0] += 1
+    shards[1].seek("Near", 1150)
+    now[0] += 1
+
+    assert shards[2].seek("Dan", 1200) == Match(white="Near", black="Dan")

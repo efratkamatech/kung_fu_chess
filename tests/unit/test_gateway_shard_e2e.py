@@ -31,9 +31,11 @@ from kfchess.shared.protocol import (
     MoveStarted,
     Play,
     Rejected,
+    Resume,
     Settled,
     Seated,
     State,
+    Welcome,
     decode,
     encode,
 )
@@ -214,3 +216,42 @@ def test_a_second_gateway_serves_the_same_room_without_knowing_the_first():
 
     assert black.of_type(MoveStarted)[-1].to_sq == "a3"
     assert black.of_type(Seated)[-1].color is Color.BLACK
+
+
+# --- S3 exit criterion: the token is checked by the shard, not by the gateway ---
+
+def test_a_wrong_seat_token_is_refused_across_the_bus():
+    """The refusal comes back from the shard, through a gateway that read nothing.
+
+    ``test_gateway_boundary`` is the other half of this: it forbids the gateway from
+    importing the directory at all, so it *could* not check a token even if some later
+    convenience wanted it to. This half shows the refusal still arrives.
+    """
+    bus, gateway, shard = a_world()
+    white = logged_in(gateway, "Efrat")
+    black = logged_in(gateway, "Dan")
+    white.send(Play())
+    black.send(Play())
+    black.leave()  # her socket drops, mid-game
+
+    impostor = Client(gateway)
+    impostor.send(Resume("Dan", "not-the-token"))
+
+    assert impostor.of_type(Rejected)[-1].reason is RejectReason.BAD_SEAT
+    assert impostor.of_type(Seated) == []
+
+
+def test_the_right_seat_token_gets_the_seat_back_across_the_bus():
+    bus, gateway, shard = a_world()
+    white = logged_in(gateway, "Efrat")
+    black = logged_in(gateway, "Dan")
+    white.send(Play())
+    black.send(Play())
+    token = black.of_type(Seated)[-1].seat_token
+    black.leave()
+
+    returner = Client(gateway)
+    returner.send(Resume("Dan", token))
+
+    assert returner.of_type(Welcome)[-1].color is Color.BLACK
+    assert returner.of_type(State) != []  # and the board arrives on the new connection

@@ -181,3 +181,32 @@ def test_it_gives_up_after_the_configured_number_of_tries():
         Rooms(store, "sh2", generate_id=always_taken).create(2)
 
     assert len(attempts) == ROOM_ID_MAX_ATTEMPTS
+
+
+def test_no_id_is_handed_out_twice_however_many_shards_are_drawing():
+    """The exit criterion, made hostile: fifty shards drawing from an alphabet of five.
+
+    Collisions are certain rather than unlikely here, which is the point — a dictionary
+    per process would sail through this test and hand the same id to a dozen players.
+    Every claim goes through one store, so the ids that come back are all different and
+    the shards that could not get one are told so rather than quietly sharing.
+    """
+    store, _ = a_store()
+    alphabet = "ABCDE"
+    draws = iter(alphabet * 200)  # every shard walks the same tiny space, in the same order
+    shards = [
+        Rooms(store, f"sh{index}", generate_id=lambda: next(draws)) for index in range(50)
+    ]
+
+    claimed, refused = [], 0
+    for game_id, shard in enumerate(shards):
+        try:
+            claimed.append(shard.create(game_id))
+        except RoomIdUnavailable:
+            refused += 1
+
+    assert len(claimed) == len(set(claimed))  # nobody got somebody else's id
+    assert sorted(claimed) == sorted(alphabet)  # and the space was used up, not wasted
+    assert refused == len(shards) - len(alphabet)
+    for room_id in claimed:
+        assert store.get(f"room:{room_id}") is not None  # each claim is on the record

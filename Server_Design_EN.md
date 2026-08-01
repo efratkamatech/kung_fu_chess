@@ -1187,6 +1187,20 @@ them with measurements.
 | Implication of 30–90 s games? | **No state worth saving** | no migration, no replication, a 90-second drain |
 | Agones? | **Deferred to S6+** | short games do not justify the complexity |
 | What needs HA? | **Only PostgreSQL** | everything else holds data worth <90 seconds |
+| Does the game still run on one machine? | **Yes — `--solo`, and it must** | the same code over an in-process bus and store; infrastructure is a deployment choice, never a condition for playing |
+
+### The rule that came out of building it
+
+Every piece of shared state is **injected**, and its default is an implementation inside
+the process. Redis and NATS are what a *deployment* supplies, not what the game depends
+on: `python server_main.py --solo` runs the same gateway, the same shard and the same
+lobby, with a dictionary where Redis is and a function call where NATS is.
+
+This is a design constraint, not a convenience. The moment there are two implementations
+of anything — a "local mode" branch in the lobby, a second matchmaker for laptops — they
+drift, and the drift is found by whoever tries to play at home. So there is no such
+branch anywhere: there are two objects, chosen in one line each, and everything above
+that line is unable to tell which it got. A bug found in one deployment is a bug in both.
 
 ### The finding in one sentence
 
