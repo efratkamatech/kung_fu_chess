@@ -33,6 +33,7 @@ from kfchess.bus.envelope import (
     ClientEventKind,
     ToClient,
     decode_client_event,
+    decode_join_game,
     decode_start_game,
     encode,
 )
@@ -85,6 +86,10 @@ class Shard:
         self._bus.subscribe(
             subjects.shard_start_game(self._shard_id), self._on_start_game
         )
+        # ...and players sent here because the room they typed is one of this shard's.
+        self._bus.subscribe(
+            subjects.shard_join_game(self._shard_id), self._on_join_game
+        )
 
     # --- what the gateways report ---------------------------------------------
 
@@ -124,6 +129,13 @@ class Shard:
         self._hub.start_game(
             self._client_for(request.white), self._client_for(request.black)
         )
+
+    def _on_join_game(self, subject: str, payload: str) -> None:
+        """Somebody typed a room id at another shard, and the room is one of ours."""
+        request = decode_join_game(payload)
+        client_id, username, rating = self._client_for(request.joiner)
+        _log.info("%s sent here for room %s", username, request.room_id)
+        self._hub.join_game(client_id, username, rating, request.room_id)
 
     def _client_for(self, seatee):
         """This shard's client number for one player of a handed-over game."""

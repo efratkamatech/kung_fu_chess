@@ -463,16 +463,60 @@ class Lobby:
         self._broadcast_state(game_id)
 
     def _on_join_room(self, client_id: int, room_id: str) -> None:
-        """Join an existing room: second joiner is black, the rest are spectators."""
+        """Join an existing room: second joiner is black, the rest are spectators.
+
+        The room may not be here. Room ids are claimed where every shard can see the
+        claim, so a player can type one into a client that happens to be talking to a
+        shard which has never heard of it — and the answer is to send her where it is,
+        not to tell her it does not exist.
+        """
         client = self._clients[client_id]
         if client.username is None or client.session_id is not None:
             return
+        self._stop_seeking(client)
         game_id = self._rooms.game_for(room_id)
-        if game_id is None:
+        if game_id is not None:
+            self._admit(client_id, game_id, room_id)
+            return
+        elsewhere = self._rooms.shard_of(room_id)
+        if elsewhere is None or elsewhere == self._shard_id or self._to_shard is None:
+            # No such room anywhere; or a claim outliving the game it was for; or this
+            # lobby has no way to reach another shard. All three are the same answer.
             _log.info("client %d tried to join unknown room %s", client_id, room_id)
             self._send(client_id, Notice(NoticeReason.NO_SUCH_ROOM))
             return
-        self._stop_seeking(client)
+        _log.info("client %d sent to room %s on %s", client_id, room_id, elsewhere)
+        self._to_shard(
+            subjects.shard_join_game(elsewhere),
+            envelope.encode(
+                envelope.JoinGame(
+                    envelope.Seatee(client.address, client.username, client.rating),
+                    room_id,
+                )
+            ),
+        )
+        self.release(client_id)
+
+    def join_game(self, client_id: int, username: str, rating: int, room_id: str) -> None:
+        """Admit somebody another shard sent here, into a room this one is running.
+
+        The receiving end of the handover above, and the same method the local path takes
+        once the two have converged: whether she was already talking to this shard or has
+        just been redirected to it makes no difference to the seat she gets.
+        """
+        client = self._clients[client_id]
+        client.username = username
+        client.rating = rating
+        game_id = self._rooms.game_for(room_id)
+        if game_id is None:
+            # It ended between her being sent here and arriving. Rare, and the honest
+            # answer is the one she would have got a moment earlier.
+            self._send(client_id, Notice(NoticeReason.NO_SUCH_ROOM))
+            return
+        self._admit(client_id, game_id, room_id)
+
+    def _admit(self, client_id: int, game_id: int, room_id: str) -> None:
+        """Seat a joiner in a room this shard runs, and show everyone the new arrival."""
         _log.info("client %d joined room %s (game %d)", client_id, room_id, game_id)
         self._seat(client_id, game_id, room_id)  # BLACK, then None (a spectator)
         self._broadcast(game_id)

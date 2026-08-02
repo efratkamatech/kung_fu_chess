@@ -85,6 +85,11 @@ def shard_start_game(shard_id: str) -> str:
     return f"shard.{shard_id}.start_game"
 
 
+def shard_join_game(shard_id: str) -> str:
+    """Where one shard is asked to add somebody to a room it is already running."""
+    return f"shard.{shard_id}.join_game"
+
+
 def gateway_inbox(gateway_id: str) -> str:
     """Everything addressed to any connection this gateway holds."""
     return f"conn.{gateway_id}.{_MATCH_REST}"

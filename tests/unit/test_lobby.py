@@ -860,3 +860,14 @@ def test_a_partner_waiting_on_another_shard_is_left_in_the_queue():
     assert of_type(mine, Seated) == []
     assert of_type(away, Seated) == []
     assert SharedState.on(store).matchmaker.is_waiting("Efrat")  # still there for the next one
+
+
+def test_a_joiner_sent_here_for_a_room_that_has_since_ended_is_told_so():
+    """The race: the last person left the room between her being redirected and arriving."""
+    hub = make_lobby()
+    joiner, joiner_id = login_ready(hub, "Dan")
+
+    hub.join_game(joiner_id, "Dan", START_RATING, "AAAAAA")
+
+    assert joiner.received[-1] == Notice(NoticeReason.NO_SUCH_ROOM)
+    assert of_type(joiner, Seated) == []

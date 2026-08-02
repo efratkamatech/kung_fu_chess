@@ -164,6 +164,28 @@ class StartGame:
         return cls(Seatee.from_dict(data["white"]), Seatee.from_dict(data["black"]))
 
 
+@dataclass(frozen=True)
+class JoinGame:
+    """Shard -> shard: put this one into the game behind ``room_id``, which you run.
+
+    The other half of :class:`StartGame`, and the reason a private room id can be typed
+    into any client on any machine: the room is claimed globally, so whoever the joiner
+    happens to be talking to can find out where it is and send her there. She may end up
+    black, or she may end up watching — that is the receiving shard's to decide, and it
+    decides it exactly as it would for somebody who had been there all along.
+    """
+
+    joiner: Seatee
+    room_id: str
+
+    def to_dict(self) -> dict:
+        return {"joiner": self.joiner.to_dict(), "room_id": self.room_id}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "JoinGame":
+        return cls(Seatee.from_dict(data["joiner"]), data["room_id"])
+
+
 def encode(envelope) -> str:
     """Pack an envelope into the JSON string that goes on the wire."""
     return json.dumps(envelope.to_dict())
@@ -182,3 +204,8 @@ def decode_to_client(payload: str) -> ToClient:
 def decode_start_game(payload: str) -> StartGame:
     """Read a :class:`StartGame` off a shard's own start-game subject."""
     return StartGame.from_dict(json.loads(payload))
+
+
+def decode_join_game(payload: str) -> JoinGame:
+    """Read a :class:`JoinGame` off a shard's own join-game subject."""
+    return JoinGame.from_dict(json.loads(payload))

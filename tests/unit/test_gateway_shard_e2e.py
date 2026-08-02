@@ -24,7 +24,7 @@ from kfchess.services.shared import SharedState
 from kfchess.services.store import InMemoryKeyValueStore
 from kfchess.server.shard import Shard
 from kfchess.server.user_store import UserStore
-from kfchess.shared.codes import RejectReason
+from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
     CreateRoom,
     Disconnected,
@@ -32,6 +32,7 @@ from kfchess.shared.protocol import (
     Login,
     Move,
     MoveStarted,
+    Notice,
     Play,
     Rejected,
     Resume,
@@ -388,3 +389,57 @@ def test_a_game_handed_over_still_ends_and_still_pays_out():
         shard.tick(2 * MS_PER_CELL)
 
     assert [m.at_sq for m in black.of_type(Settled)] == ["a3"]
+
+
+# --- a room on the other shard -------------------------------------------------
+
+def two_shards_with_a_room(id_generator=lambda: "AAAAAA"):
+    """Two shards sharing a store, and a room opened on one of them."""
+    bus = InProcessMessageBus()
+    gateway = Gateway(bus, "gw1")
+    users = UserStore(":memory:")
+    store = InMemoryKeyValueStore()
+    first = Shard(bus, a_board, users, SharedState.on(store, "sh1", generate_id=id_generator))
+    second = Shard(bus, a_board, users, SharedState.on(store, "sh2", generate_id=id_generator))
+    creator = logged_in(gateway, "Efrat")
+    creator.send(CreateRoom())
+    return bus, gateway, first, second, creator
+
+
+def test_a_room_id_can_be_typed_at_the_shard_that_does_not_run_it():
+    """Ids are claimed where every shard can see them, so any shard can route a joiner."""
+    bus, gateway, _, _, creator = two_shards_with_a_room()
+    room_id = creator.of_type(Seated)[-1].room_id
+
+    joiner = logged_in(gateway, "Dan")  # claimed by the other shard
+    joiner.send(JoinRoom(room_id))
+
+    assert joiner.of_type(Seated)[-1].color is Color.BLACK
+    assert joiner.of_type(Notice) == []
+
+
+def test_the_redirected_joiner_sees_the_moves_in_that_room():
+    bus, gateway, _, _, creator = two_shards_with_a_room()
+    joiner = logged_in(gateway, "Dan")
+    joiner.send(JoinRoom(creator.of_type(Seated)[-1].room_id))
+
+    creator.send(Move("WRa1a3"))
+
+    assert [m.to_sq for m in joiner.of_type(MoveStarted)] == ["a3"]
+
+
+def test_a_redirected_joiner_belongs_to_the_shard_running_the_room():
+    bus, gateway, _, _, creator = two_shards_with_a_room()
+    joiner = logged_in(gateway, "Dan")
+    joiner.send(JoinRoom(creator.of_type(Seated)[-1].room_id))
+
+    assert owner_of(bus, joiner.conn_id) == owner_of(bus, creator.conn_id)
+
+
+def test_a_room_id_that_belongs_to_nobody_is_still_refused():
+    bus, gateway, _, _, _ = two_shards_with_a_room()
+
+    joiner = logged_in(gateway, "Dan")
+    joiner.send(JoinRoom("ZZZZZZ"))
+
+    assert joiner.of_type(Notice)[-1].reason is NoticeReason.NO_SUCH_ROOM
