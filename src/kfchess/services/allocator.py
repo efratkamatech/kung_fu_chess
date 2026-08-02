@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Optional
 
 from kfchess.config import SHARD_TTL_S
+from kfchess.services.store import KeyValueStore
 
 # The pool, scored by how many games each shard is running. One ranking, so "who is least
 # busy" is a range query rather than a walk over every shard's key.
@@ -34,7 +35,7 @@ POOL = "shard:load"
 class Allocator:
     """Keeps the pool of live shards, and picks one to run a new game."""
 
-    def __init__(self, store, ttl_s: int = SHARD_TTL_S) -> None:
+    def __init__(self, store: KeyValueStore, ttl_s: int = SHARD_TTL_S) -> None:
         self._store = store
         self._ttl_s = ttl_s
 

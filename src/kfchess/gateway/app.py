@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 
 from kfchess.bus import subjects
+from kfchess.bus.message_bus import MessageBus
 from kfchess.bus.envelope import (
     ClientEvent,
     ClientEventKind,
@@ -43,7 +44,7 @@ _log = logging.getLogger(__name__)  # silent until configure_logging runs
 class Gateway:
     """Moves text between sockets and subjects, and holds no game state at all."""
 
-    def __init__(self, bus, gateway_id: str) -> None:
+    def __init__(self, bus: MessageBus, gateway_id: str) -> None:
         self._bus = bus
         self._gateway_id = gateway_id
         self._router = ConnectionRouter(gateway_id)

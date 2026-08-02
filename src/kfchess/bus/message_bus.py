@@ -29,7 +29,7 @@ same :func:`matches`, so a subscription that works in one process works over NAT
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Protocol, Tuple
 
 # A subscriber is handed the concrete subject a message arrived on as well as the
 # payload: a wildcard subscription such as ``conn.gw1.>`` is answered by many subjects,
@@ -38,6 +38,27 @@ Handler = Callable[[str, str], None]
 
 _MATCH_ONE = "*"
 _MATCH_REST = ">"
+
+
+class MessageBus(Protocol):
+    """What a gateway or a shard needs of a bus — the same three, either deployment.
+
+    Written down for the same reason as
+    :class:`~kfchess.services.store.KeyValueStore`: both implementations below satisfy it,
+    neither inherits from it, and every ``bus`` parameter now says what will be done with
+    it instead of leaving a reader to find out from a docstring two files away.
+    """
+
+    def publish(self, subject: str, payload: str) -> None:
+        """Send ``payload`` to whoever is subscribed to ``subject``."""
+
+    def subscribe(
+        self, pattern: str, handler: Handler, queue_group: Optional[str] = None
+    ) -> None:
+        """Call ``handler`` for messages matching ``pattern``; share them within a group."""
+
+    def unsubscribe(self, pattern: str) -> None:
+        """Stop receiving messages on ``pattern``."""
 
 
 def matches(pattern: str, subject: str) -> bool:

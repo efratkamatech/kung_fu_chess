@@ -39,7 +39,7 @@ from kfchess.config import (
     ROOM_TTL_S,
     SHARD_ID,
 )
-from kfchess.services.store import InMemoryKeyValueStore
+from kfchess.services.store import InMemoryKeyValueStore, KeyValueStore
 
 
 class RoomIdUnavailable(RuntimeError):
@@ -60,7 +60,7 @@ class Rooms:
 
     def __init__(
         self,
-        store=None,
+        store: Optional[KeyValueStore] = None,
         shard_id: str = SHARD_ID,
         ttl_s: int = ROOM_TTL_S,
         generate_id: Callable[[], str] = random_id,

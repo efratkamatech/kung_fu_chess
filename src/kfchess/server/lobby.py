@@ -48,6 +48,7 @@ from kfchess.shared.protocol import (
 )
 from kfchess.server.session import GameSession
 from kfchess.services.directory import Seat
+from kfchess.services.matchmaker import Match
 from kfchess.services.rooms import RoomIdUnavailable
 from kfchess.services.shared import SharedState
 from kfchess.server.user_store import UserStore
@@ -356,7 +357,7 @@ class Lobby:
             return
         self._place(match, self._seeking.pop(match.black))
 
-    def _place(self, match, black_id: int) -> None:
+    def _place(self, match: Match, black_id: int) -> None:
         """Get this pair a game, wherever it has to run and whoever is holding them.
 
         The fast path is both players on this shard and this shard chosen to run it,

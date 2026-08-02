@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from kfchess.config import MATCH_ELO_RANGE, MATCH_TIMEOUT_MS
+from kfchess.services.store import KeyValueStore
 
 # The one ranking every seeker is in. A name, not a pattern: there is exactly one queue.
 QUEUE = "mm:waiting"
@@ -113,7 +114,7 @@ class Matchmaker:
 
     def __init__(
         self,
-        store,
+        store: KeyValueStore,
         elo_range: int = MATCH_ELO_RANGE,
         timeout_ms: int = MATCH_TIMEOUT_MS,
         now_ms: Callable[[], int] = wall_clock_ms,

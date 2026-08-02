@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Tuple
 
 from kfchess.obs.metrics import REGISTRY
 
@@ -34,7 +35,7 @@ _log = logging.getLogger(__name__)  # silent until configure_logging runs
 _METRICS_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 
-def answer(path: str):
+def answer(path: str) -> Tuple[int, str, str]:
     """What to reply to ``path``: ``(status, body, content type)``.
 
     The whole of the decision, as a function of a string, so it is tested by calling it.

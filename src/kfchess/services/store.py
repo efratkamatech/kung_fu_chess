@@ -28,7 +28,43 @@ claim about the other.
 from __future__ import annotations
 
 import time
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Protocol, Tuple
+
+
+class KeyValueStore(Protocol):
+    """What a service needs of a store, written down rather than described.
+
+    Both implementations below satisfy it and neither inherits from it: it exists so that
+    every ``store`` parameter in this package says what it will be used for. It was prose
+    in four docstrings before, which is the same information in the place where nothing
+    can check it.
+    """
+
+    def get(self, key: str) -> Optional[str]:
+        """The value at ``key``, or ``None`` if it is absent or has expired."""
+
+    def set(
+        self,
+        key: str,
+        value: str,
+        ttl_s: Optional[int] = None,
+        unless_exists: bool = False,
+    ) -> bool:
+        """Write ``value`` at ``key``; answer whether it was written."""
+
+    def delete(self, key: str) -> None:
+        """Forget ``key``. Deleting one that is not there is not an error."""
+
+    def add_to_ranking(self, key: str, member: str, score: float) -> None:
+        """Put ``member`` in the ranking at ``key`` with ``score``."""
+
+    def remove_from_ranking(self, key: str, member: str) -> None:
+        """Take ``member`` out of a ranking; one that is not there is not an error."""
+
+    def first_in_range(
+        self, key: str, low: float, high: float, reverse: bool = False
+    ) -> Optional[Tuple[str, float]]:
+        """The lowest-scoring member within ``[low, high]``, or the highest if reversed."""
 
 
 def monotonic_s() -> float:
@@ -127,7 +163,12 @@ class RedisKeyValueStore:  # pragma: no cover  (a live Redis; the in-memory one 
     """
 
     def __init__(self, client) -> None:
-        """Wrap a connected ``redis-py`` client (see :func:`connect`)."""
+        """Wrap a connected ``redis-py`` client (see :func:`connect`).
+
+        ``client`` is left untyped: it is ``redis.Redis``, and naming it here would mean
+        importing the library at module scope, which is exactly what this file avoids so
+        that a machine without it can still run everything else.
+        """
         self._client = client
 
     def get(self, key: str) -> Optional[str]:

@@ -34,6 +34,7 @@ from typing import Callable, Optional
 
 from kfchess.config import PLAYER_TTL_S, SEAT_TOKEN_BYTES
 from kfchess.model.color import Color
+from kfchess.services.store import KeyValueStore
 
 
 def mint_token() -> str:
@@ -73,7 +74,7 @@ class PlayerDirectory:
 
     def __init__(
         self,
-        store,
+        store: KeyValueStore,
         ttl_s: int = PLAYER_TTL_S,
         new_token: Callable[[], str] = mint_token,
     ) -> None:

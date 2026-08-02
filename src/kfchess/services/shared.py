@@ -17,14 +17,14 @@ and there is no second code path to keep honest.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 from kfchess.config import SHARD_ID
 from kfchess.services.allocator import Allocator
 from kfchess.services.directory import PlayerDirectory
 from kfchess.services.matchmaker import Matchmaker, wall_clock_ms
 from kfchess.services.rooms import Rooms, random_id
-from kfchess.services.store import InMemoryKeyValueStore
+from kfchess.services.store import InMemoryKeyValueStore, KeyValueStore
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class SharedState:
     @classmethod
     def on(
         cls,
-        store=None,
+        store: Optional[KeyValueStore] = None,
         shard_id: str = SHARD_ID,
         generate_id: Callable[[], str] = random_id,
         now_ms: Callable[[], int] = wall_clock_ms,

@@ -25,12 +25,14 @@ plays a whole game in one thread. :func:`serve` is the irreducible async shell.
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Tuple
 
 from kfchess.bus import subjects
+from kfchess.bus.message_bus import MessageBus
 from kfchess.config import SHARD_HEARTBEAT_MS
 from kfchess.bus.envelope import (
     ClientEventKind,
+    Seatee,
     ToClient,
     decode_client_event,
     decode_join_game,
@@ -50,7 +52,7 @@ class Shard:
 
     def __init__(
         self,
-        bus,
+        bus: MessageBus,
         new_board: NewBoard,
         users: UserStore,
         shared: Optional[SharedState] = None,
@@ -138,8 +140,8 @@ class Shard:
         _log.info("%s sent here for room %s", username, request.room_id)
         self._hub.join_game(client_id, username, rating, request.room_id)
 
-    def _client_for(self, seatee):
-        """This shard's client number for one player of a handed-over game."""
+    def _client_for(self, seatee: Seatee) -> Tuple[int, str, int]:
+        """This shard's client number, name and rating for one handed-over player."""
         client_id = self._client_of.get(seatee.conn_id)
         if client_id is None:
             client_id = self._hub.connect(self._sender(seatee.conn_id), seatee.conn_id)
