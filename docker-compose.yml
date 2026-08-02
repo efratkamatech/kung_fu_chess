@@ -78,6 +78,8 @@ services:
       DATABASE_URL: postgresql://kfchess:kfchess@postgres:5432/kfchess
       NATS_URL: nats://nats:4222
       REDIS_URL: redis://redis:6379/0
+      # Ten shards being searched at once want fields, not sentences.
+      KFC_LOG_JSON: "1"
       # No KFC_SHARD_ID: each replica names itself after its container, so two of them
       # get two names without anybody assigning any. Setting one here would give both
       # replicas the same name, and each would receive the other's connections.
@@ -96,6 +98,7 @@ services:
     environment:
       NATS_URL: nats://nats:4222
       KFC_GATEWAY_ID: gw1
+      KFC_LOG_JSON: "1"
       # Bind every interface: "localhost" inside a container means only the container.
       KFC_SERVER_HOST: 0.0.0.0
     ports:

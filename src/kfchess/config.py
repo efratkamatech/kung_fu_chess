@@ -233,6 +233,13 @@ ROOM_ID_MAX_ATTEMPTS = 10
 # comes back into circulation without anything having to notice the crash.
 ROOM_TTL_S = 300
 
+# --- Logging (M6, S5) --------------------------------------------------------
+# Whether logs are written as JSON objects or as human-readable lines. A person tailing
+# one machine wants a line; ten shards and three gateways being searched at once want
+# fields. Set it in a deployment, leave it alone on a laptop -- docker-compose turns it
+# on for the containers.
+LOG_JSON = os.environ.get("KFC_LOG_JSON", "").lower() in ("1", "true", "yes")
+
 # --- Logging (M6) ------------------------------------------------------------
 # Where the server and client write their activity logs (git-ignored; not game art).
 SERVER_LOG = ASSETS_DIR.parent / "server.log"
