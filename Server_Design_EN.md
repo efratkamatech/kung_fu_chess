@@ -290,6 +290,47 @@ Per shard:
 it is the correct posture. What matters in the *design* is not the exact number, but that
 **no component is bound to a single process**: to add capacity you add another replica.
 
+#### What S5 measured, and where the estimates were wrong
+
+Run with `tools/loadbot.py` against `server_main.py --solo` — **one process holding the
+gateway, the shard and every socket, with the load generator on the same laptop**. That
+caveat carries all the weight below: it is the least favourable arrangement this code has,
+and the split deployment was not measured because Docker was not running on the machine.
+
+| Assumption | Estimated | Measured | Verdict |
+|---|---|---|---|
+| One game, one tick | ~50 µs | **~7 µs** (p99 ≤ 50 µs) | **7× better than assumed** |
+| Server's share of a move | — | **p99 ≤ 1 ms**, at every size tested | not the constraint |
+| Bytes per connection | ~325 B/s | **470–490 B/s** | optimistic by ~45% |
+| Games before p99 > 100 ms | ~500 | **~30–40** | **far worse — and not for the reason the estimate was about** |
+| Logins admitted per second | never considered | **~12/s** | **the real limit** |
+| Matches per second | "the hot path" | ~8/s, never visible | **refuted** |
+
+**The engine was never the problem.** Every server-side number stayed flat as load grew:
+seven microseconds a tick at 25 games and at 353, one millisecond to handle a move
+throughout. The capacity calculation above — half a core for five hundred games — is
+*generous* by the measurement; at 7 µs it would be a fifteenth of a core.
+
+**What actually degrades is the loop.** The tick rate fell from 17.6 Hz at 25 games to
+9.8 Hz at 100, against a 20 Hz ceiling, and end-to-end latency followed it. Cutting the
+move rate to a third changed nothing, so it is not move throughput: it is that one
+asyncio loop is running the games, fanning every broadcast out to every socket, and doing
+both between the arrival of a move and anybody hearing about it. In the split deployment
+those are two processes on two cores and the shard writes to no sockets at all — which is
+the measurement still owed.
+
+**And the finding nobody was looking for: the password hash is the admission gate.** One
+`register_or_login` costs **36.5 ms of pure CPU** (PBKDF2, 100,000 rounds — chosen
+deliberately in M4, and correctly). It runs on the thread that runs the games. Of 1,000
+connections opened at once, **706 were seated within 60 seconds**; the rest were still
+queued behind other people's hashes. That is ~12 logins a second per shard, and it is not
+a number that improves by adding games or removing them.
+
+The design already has the answer and this build has not taken it: §3 puts **Auth in its
+own stateless service**, precisely so that the expensive, embarrassingly parallel part of
+logging in can be scaled by replica count without touching the shards. Until it moves,
+every login is 36 ms during which that shard's games do not advance.
+
 **Why multiple regions?** 10 million players "from all over the world" cannot sit on one
 continent anyway. `MS_PER_CELL = 1000` — a piece crosses a square in one second. A 300 ms
 cross-ocean round trip is **a third of a piece's travel time**. The game stops being a
@@ -529,6 +570,11 @@ every two seconds — so twice the event rate assumed above):
 The gap is the event rate, not the protocol: at the design's one-move-per-two-seconds
 this lands within a few percent of the estimate. The shape of the result holds — the
 resync is still the larger half of the bill (265 B/s of the 537).
+
+**Measured again in S5**, this time over real WebSockets with the load bot rather than
+through the `Lobby` directly: **470–490 B/s per connection** across 25–50 concurrent
+games. The S0 bench figure holds under load; the original 325 B/s estimate is optimistic
+by about half, and the resync remains the larger half of the bill.
 
 #### Bonus: the same idea cuts CPU
 
@@ -1189,6 +1235,8 @@ them with measurements.
 | Agones? | **Deferred to S6+** | short games do not justify the complexity |
 | What needs HA? | **Only PostgreSQL** | everything else holds data worth <90 seconds |
 | Does the game still run on one machine? | **Yes — `--solo`, and it must** | the same code over an in-process bus and store; infrastructure is a deployment choice, never a condition for playing |
+| Was the ~50 µs tick right? | **No — it is ~7 µs** | measured in S5; the engine has seven times the headroom the sizing assumed |
+| What actually limits a shard? | **Logging in, then the event loop** | PBKDF2 costs 36.5 ms on the game thread; the engine never appears |
 
 ### The rule that came out of building it
 
@@ -1208,6 +1256,14 @@ that line is unable to tell which it got. A bug found in one deployment is a bug
 > I expected the challenge to be spreading the game across many servers. Measuring showed
 > the first challenge is to stop sending each client 2,148 bytes twenty times a second.
 > **Protocol before infrastructure.**
+
+And S5 said it a second time, about a different thing. Every number this design was sized
+on concerned the game — how long a tick takes, how many games fit on a core. The game was
+never the problem: it came in seven times cheaper than assumed and stayed flat under every
+load applied to it. What ran out first was the ability to *let people in*, at 36 ms of
+password hashing apiece on the same thread that runs the games.
+
+> **The expensive part of a game server was not the game.**
 
 ---
 

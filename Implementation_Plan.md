@@ -654,9 +654,53 @@ move them out of the "estimated" column.
 
 ### Exit criteria
 
-- [ ] `/metrics` and `/healthz` on every service
-- [ ] `loadbot.py` drives ≥1,000 concurrent connections locally
-- [ ] The three measurements above are recorded and written back into `Server_Design_EN.md`
+- [x] `/metrics` and `/healthz` on every service — including the solo server, where there
+      is no Prometheus and `curl localhost:9100/metrics` is the whole monitoring stack
+- [x] `loadbot.py` drives ≥1,000 concurrent connections locally — all 1,000 opened; 706
+      of them were seated within 60 s, and *why* the other 294 were not is the finding below
+- [x] The three measurements are recorded and written back into `Server_Design_EN.md`
+
+### What came out
+
+Measured against `server_main.py --solo` — one process holding the gateway, the shard and
+every socket, with the load generator on the same laptop. The split deployment was **not**
+measured: Docker was not running on the machine. That caveat carries real weight and is
+stated in the design document too.
+
+| Assumption | Estimated | Measured |
+|---|---|---|
+| One game, one tick | ~50 µs | **~7 µs** |
+| Bytes per connection | ~325 B/s | **470–490 B/s** |
+| Games before p99 > 100 ms | ~500 | **~30–40** |
+| Logins per second | not considered | **~12/s** |
+
+**The engine was never the constraint.** Seven microseconds a tick at 25 games and at 353;
+the server's share of handling a move stayed at p99 ≤ 1 ms throughout. The sizing
+calculation was generous, not optimistic, about the part it was about.
+
+**The loop is.** Tick rate fell from 17.6 Hz at 25 games to 9.8 Hz at 100, against a 20 Hz
+ceiling, and latency followed. Cutting the move rate to a third changed nothing, so it is
+not move throughput — it is one asyncio loop running the games *and* fanning every
+broadcast out to every socket. The split deployment gives those two separate processes,
+which is exactly the measurement still owed.
+
+**And the one nobody was looking for: PBKDF2 is the admission gate.** One login costs
+36.5 ms of CPU, on the thread that runs the games. That is ~12 logins a second per shard,
+and it is why 294 of 1,000 connections were still queued after a minute. The design
+already answers it — §3 puts Auth in its own stateless service — and this build has not
+taken the answer yet. **That is the first candidate for S6 or a stage of its own**, and it
+is worth more than anything on the K3s list.
+
+### Deviations from the plan above
+
+- `kfc_resolve_duration_us` was built as **`kfc_game_tick_us`**, measured around a whole
+  game's tick rather than `resolve()` alone: the core may not import the observability
+  package, and what one game costs per tick is the number that decides how many fit.
+- `kfc_bytes_out_per_conn` was built as a **counter**, `kfc_bytes_out_total`. Bytes per
+  second per connection is a rate over a gauge and both parts are published; a histogram
+  would have measured message sizes, which is not the claim.
+- **Grafana was not built.** The plan marks it optional, and a dashboard is hundreds of
+  lines of JSON for less than `curl` gives.
 
 ---
 
@@ -780,7 +824,15 @@ typed at any shard is answered by the one running it; and a shard that stops rep
 leaves the pool without anybody noticing it died. Compose runs two replicas that name
 themselves after their containers. 776 tests, 100% coverage, ruff clean.
 
-**Next:** S5 — observability and load testing, which is where the numbers this whole
-design was derived from finally get measured rather than estimated. Its first task is
-already known and written down above: in a container the server logs to a *file*, so
-`docker compose logs` shows nothing.
+**Complete: S5.** Metrics, health, structured logs on standard output, and a load bot that
+opened a thousand connections. Every estimate the design was sized on is now a
+measurement, and two of them were wrong in opposite directions: the game engine is seven
+times cheaper than assumed and was never the constraint, while logging somebody in costs
+36.5 ms of password hashing on the thread that runs the games. The known logging gap from
+S1 is closed — a container now has something to say on its standard output. 810 tests,
+100% coverage, ruff clean.
+
+**Next:** S6 as written is K3s. On the evidence above, **moving Auth out of the shard is
+worth more**, and it is already designed (§3 of the design document). The K3s work makes a
+working system deployable; the Auth split makes it able to admit players faster than
+twelve a second.
