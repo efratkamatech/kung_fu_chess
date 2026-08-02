@@ -83,7 +83,8 @@ to be revisited is written down rather than re-derived from memory.
 | "10M concurrent" means sockets held, not games in progress | Domain: players in the lobby, in the queue and watching all hold a socket | The gateway count (10M ÷ 30,000) is really a *socket* count; games are fewer | **Both are now published:** `kfc_connections` against `kfc_active_games` |
 | One game costs ~50 µs a tick | Estimated from the engine's work per tick | Games per shard, and therefore the shard count | **Found out (S5): ~7 µs.** Seven times cheaper; the estimate was pessimistic |
 | ~500 games fit on a shard | Arithmetic on the 50 µs above | The ~10,000-shard figure | **Found out (S5): ~30–40** — and not for CPU reasons. See §2 |
-| Logging in is cheap enough to ignore | Never stated, which is the point — it was assumed by omission | Admission rate under a rush | **Found out (S5): 36.5 ms of PBKDF2 each, ~12/s per shard.** The costliest wrong assumption in this document |
+| Logging in is cheap enough to ignore | Never stated, which is the point — it was assumed by omission | Admission rate under a rush | **Found out (S5): 36.5 ms of PBKDF2 each, ~12/s per shard.** The costliest wrong assumption in this document — **fixed in S6**, which moved it to its own service |
+| Two workloads on one thread degrade gracefully | Assumed by never asking | Whether a single-process deployment can be reasoned about at all | **Found out (S6): they oscillate.** Two identical runs admitted 410 and 998 players, the games moving in exact opposition |
 | A player notices delay above ~100 ms | Typical for real-time browser games | If it is really 50 ms, a broker hop on the move path stops being affordable | Playtest, then read `kfc_move_handling_ms` |
 | A full snapshot every 10 s is enough to repair drift | Chosen in S0; a client rebuilding from deltas can only drift so far | Bytes per player — the resync is the *larger* half of the bill | **Confirmed (S5):** raising the interval is the cheapest lever if traffic ever binds |
 | Nothing in Redis is worth surviving a restart | Every key there has a TTL in minutes; accounts and ratings are in PostgreSQL | Redis would need persistence and HA, which is a different cost class | Restart Redis under load and see whether anything unrecoverable is lost |
@@ -390,7 +391,7 @@ and the split deployment was not measured because Docker was not running on the 
 | Server's share of a move | — | **p99 ≤ 1 ms**, at every size tested | not the constraint |
 | Bytes per connection | ~325 B/s | **470–490 B/s** | optimistic by ~45% |
 | Games before p99 > 100 ms | ~500 | **~30–40** | **far worse — and not for the reason the estimate was about** |
-| Logins admitted per second | never considered | **~12/s** | **the real limit** |
+| Logins admitted per second | never considered | **~12/s** | **was the real limit; Auth is its own service now** |
 | Matches per second | "the hot path" | ~8/s, never visible | **refuted** |
 
 **The engine was never the problem.** Every server-side number stayed flat as load grew:
@@ -413,10 +414,37 @@ connections opened at once, **706 were seated within 60 seconds**; the rest were
 queued behind other people's hashes. That is ~12 logins a second per shard, and it is not
 a number that improves by adding games or removing them.
 
-The design already has the answer and this build has not taken it: §3 puts **Auth in its
-own stateless service**, precisely so that the expensive, embarrassingly parallel part of
-logging in can be scaled by replica count without touching the shards. Until it moves,
-every login is 36 ms during which that shard's games do not advance.
+The design already had the answer: §3 puts **Auth in its own stateless service**,
+precisely so that the expensive, embarrassingly parallel part of logging in can be scaled
+by replica count without touching the shards.
+
+#### It has now moved — and what that is worth, measured and unmeasured
+
+**Measured, and this is the change itself:** handling a `Login` on the shard's own thread
+went from **35.0 ms to 9 µs** — it publishes the password and returns. The hashing still
+costs what it always did; it simply no longer happens where the games are.
+
+| | Before | After |
+|---|---|---|
+| The shard's thread, per login | 35.0 ms | **0.009 ms** |
+| Where the 36.5 ms happens | on the games' thread | on an Auth replica that owns no games |
+| Admissions per second | ~12, per shard, unimprovable | ~27 per Auth replica, and you can start more |
+
+**Unmeasured, and it must be said as plainly as the rest:** the end-to-end gain belongs to
+the split deployment, and the split deployment still cannot be run on this machine. What
+*was* run — a thousand connections against `--solo`, where Auth shares the one thread —
+cannot show it, and did not. It showed something else worth recording instead.
+
+Two identical 60-second runs came out at **410 and 998 players seated**, with the games
+moving in exact opposition: the run that admitted 410 ticked 88,000 times and averaged
+91 ms a move; the run that admitted 998 ticked 13,000 times and averaged 614 ms. One
+thread, two workloads, and the split between them decided by scheduling rather than by
+anything anybody chose.
+
+That is not a result about Auth. It is an argument for the whole shape of this design:
+**work that competes for one thread does not degrade, it oscillates**, and which half
+suffers is not a property you can reason about from the code. Putting the two on separate
+processes is what makes either of them predictable.
 
 **Why multiple regions?** 10 million players "from all over the world" cannot sit on one
 continent anyway. `MS_PER_CELL = 1000` — a piece crosses a square in one second. A 300 ms
@@ -1324,6 +1352,7 @@ them with measurements.
 | Does the game still run on one machine? | **Yes — `--solo`, and it must** | the same code over an in-process bus and store; infrastructure is a deployment choice, never a condition for playing |
 | Was the ~50 µs tick right? | **No — it is ~7 µs** | measured in S5; the engine has seven times the headroom the sizing assumed |
 | What actually limits a shard? | **Logging in, then the event loop** | PBKDF2 costs 36.5 ms on the game thread; the engine never appears |
+| Where does the password check belong? | **Its own stateless service** | 35 ms off the games' thread; admissions become a number you raise with replicas |
 
 ### The rule that came out of building it
 

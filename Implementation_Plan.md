@@ -832,7 +832,28 @@ times cheaper than assumed and was never the constraint, while logging somebody 
 S1 is closed — a container now has something to say on its standard output. 810 tests,
 100% coverage, ruff clean.
 
-**Next:** S6 as written is K3s. On the evidence above, **moving Auth out of the shard is
-worth more**, and it is already designed (§3 of the design document). The K3s work makes a
-working system deployable; the Auth split makes it able to admit players faster than
-twelve a second.
+**Complete: S6 — Auth as its own service.** Taken ahead of the K3s work on the evidence
+above, and already designed in §3 of the design document.
+
+A shard now publishes the password to `auth.request` and returns; any Auth replica in the
+queue group answers the shard that asked. Handling a login on the shard's thread went from
+**35.0 ms to 9 µs** — the hashing costs what it always did, it just no longer happens
+where the games are, and admissions per second became a number you raise by starting
+another container.
+
+Two things worth carrying forward. The password now crosses the bus, which is **forced,
+not chosen**: the gateway may not read what it carries, so it cannot route logins, and the
+shard is the first component that knows the text was a login at all. And login became
+asynchronous, so a socket can close during the check — both ends drop the late answer, and
+both have a test.
+
+The end-to-end gain is **unmeasured**, for the same reason as S5: the split deployment
+needs Docker, and `--solo` shares one thread so it cannot show it. What solo did show is
+recorded in the design document and is a finding in its own right: two identical runs
+admitted 410 and 998 players, with the games moving in exact opposition. Two workloads on
+one thread do not degrade — they oscillate.
+
+820 tests, 100% coverage, ruff clean.
+
+**Next:** S6 as originally written — K3s. Its exit criteria are unchanged, and the cluster
+it deploys now has one more service in it.
