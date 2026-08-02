@@ -572,6 +572,17 @@ class Lobby:
         """How many games this lobby is running — what "load" means for a shard."""
         return len(self._games)
 
+    def room_key(self, game_id: int) -> str:
+        """How this game is addressed on the bus — unique across every shard.
+
+        A game id is a counter in one process, so two shards each running their first
+        game would both publish to ``room.0`` and every gateway would fan each game's
+        moves out to the other's players. Carrying the shard's name makes the key as
+        global as the subject it becomes. It is not the short code a player types for a
+        private room: that one is chosen to be readable, and this one to be unique.
+        """
+        return f"{self._shard_id}-{game_id}"
+
     def game_of(self, client_id: int) -> Optional[int]:
         """Which game a client is in, or ``None`` for one still in the lobby or gone.
 
@@ -678,7 +689,7 @@ class Lobby:
         of the whole board.
         """
         for message in self._games[game_id].session.drain_deltas():
-            self._to_room(subjects.room_delta(str(game_id)), encode(message))
+            self._to_room(subjects.room_delta(self.room_key(game_id)), encode(message))
 
     def _broadcast_state(self, game_id: int) -> None:
         """Send the game's full snapshot to the room.
@@ -688,7 +699,7 @@ class Lobby:
         the periodic resync came due.
         """
         self._to_room(
-            subjects.room_state(str(game_id)),
+            subjects.room_state(self.room_key(game_id)),
             encode(State(self._games[game_id].session.snapshot())),
         )
 
@@ -700,7 +711,7 @@ class Lobby:
         fan-out happens at the gateways — which is the difference between a room's
         spectators costing the shard one message and costing it one message each.
         """
-        for client in self._members(int(subjects.room_of(subject))):
+        for client in self._members(_game_of_key(subjects.room_of(subject))):
             client.send(text)
 
     def _resync_if_due(self, game_id: int, dt_ms: int) -> None:
@@ -719,3 +730,12 @@ class Lobby:
     def _send(self, client_id: int, message) -> None:
         """Encode and push one message to a single (known) client."""
         self._clients[client_id].send(encode(message))
+
+
+def _game_of_key(room_key: str) -> int:
+    """The game behind a room key — the inverse of :meth:`Lobby.room_key`.
+
+    Only the single-process room sink needs this, because only it has to get back from a
+    subject to an object in its own memory. A shard publishes and never looks back.
+    """
+    return int(room_key.rsplit("-", 1)[1])

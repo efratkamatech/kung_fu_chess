@@ -78,10 +78,14 @@ Docker and connect exactly the same clients:
 docker compose up --build
 ```
 
-Compose runs five services: `gateway` (the only one with a published port), `shard`,
-`nats`, `redis`, and `postgres`. Accounts and ratings live in a named volume, so they
-survive `docker compose down`; Redis deliberately has none, since everything in it
-expires in minutes anyway. To run the pieces by hand instead you need NATS and Redis
+Compose runs five services: `gateway` (the only one with a published port), `shard` (two
+replicas), `nats`, `redis`, and `postgres`. The shards name themselves after their
+containers, so neither is configured to know it is one of two — new games are spread
+across whichever are alive, a game can be handed to either as it starts, and a room id
+typed at one is answered by whichever is running it.
+
+Accounts and ratings live in a named volume, so they survive `docker compose down`; Redis
+deliberately has none, since everything in it expires in minutes anyway. To run the pieces by hand instead you need NATS and Redis
 (`NATS_URL`, `REDIS_URL`), then `python server_main.py` and `python gateway_main.py`.
 
 **The two are the same game.** Not a cut-down local build and a real one: the same
@@ -116,7 +120,7 @@ Dockerfile  docker-compose.yml                              # the containerised 
 ## Tech
 
 Python (standard library only at the core), `websockets` for the gateway, `nats-py`
-between the services, `opencv-python`
+between the services, `redis` for the state they share, `opencv-python`
 for rendering and input, and `sqlite3` (stdlib) — or PostgreSQL via `psycopg`, under
 Docker — for accounts and ratings. Sound in the windowed game uses `winsound` and is
 Windows-only; the game runs without it elsewhere.

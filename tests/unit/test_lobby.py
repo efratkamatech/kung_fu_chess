@@ -709,7 +709,10 @@ def test_a_rooms_traffic_is_published_once_however_many_are_watching():
     hub.receive(cid, encode(Move("WRa1a3")))
 
     # One delta, published once -- the fan-out to the four of them is the gateways' job.
-    assert [subject for subject, _ in published] == ["room.0.delta", "room.0.delta"]
+    assert [subject for subject, _ in published] == [
+        f"room.{hub.room_key(0)}.delta",
+        f"room.{hub.room_key(0)}.delta",
+    ]
     assert isinstance(decode(published[-1][1]), MoveStarted)
 
 

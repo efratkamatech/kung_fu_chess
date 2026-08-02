@@ -547,25 +547,49 @@ built and tested above; what it cannot do is start the second shard that would u
 ### Files
 
 **New: `src/kfchess/services/allocator.py`**
-- `allocate(white, black) -> shard_id` — least-loaded selection from `shard:{id}:load`.
-- Publishes `shard.{id}.create_room` and waits for acknowledgement.
+- `allocate() -> shard_id` — least-loaded selection from the pool.
 - **Deliberately simple:** no consistent hashing, no rebalancing. Any imbalance resolves
   itself within 90 seconds as games end.
 
-**New: shard registration** — each shard periodically writes `shard:{id}:load` with a TTL,
-so a dead shard disappears from the pool by itself.
+**New: shard registration** — each shard periodically writes `shard:{id}:alive` with a
+TTL, so a dead shard disappears from the pool by itself.
 
 **Changed: `docker-compose.yml`** — run `shard` with two replicas.
 
+> **Built, and the addressing came first as expected.** `lobby.cmd` now carries one
+> sentence — a socket has opened and belongs to nobody — and every shard subscribes to it
+> **in one NATS queue group**, so exactly one of them receives each new connection and
+> claims it. The claim rides the envelope that already carried `follow_room`, and from
+> then on the gateway publishes that connection's messages to `shard.{id}.cmd` by name.
+>
+> Two things this design needed that the plan did not name. The gateway **holds** what a
+> client says before the claim arrives, because a login is usually already in flight when
+> the socket opens and her first two messages must not be answered by two different
+> shards. And a connection's owner **changes hands** when another shard seats her — one
+> message, `StartGame` or `JoinGame`, carrying her connection, name and rating, because
+> the receiving shard may never have spoken to her. Everyone else is told to let go
+> through the same `released` event, so a connection is forgotten in exactly one place.
+>
+> `room.{id}.cmd` from the S2 subject table was **not** built and is not needed: a seated
+> connection is owned by the shard running her game, so her moves already arrive there.
+> One rule — publish to the owner — instead of two.
+>
+> The two-shard tests found a real bug that no single-shard test could: a game id is a
+> counter in one process, so two shards each running their first game both published to
+> `room.0` and every gateway fanned each game's moves out to the other's players. Room
+> keys now carry the shard's name.
+
 ### Exit criteria
 
-- [ ] Two shards run; new games are distributed between them
-- [ ] A spectator can join a room on **either** shard from **either** gateway
-- [ ] Killing one shard voids only its games; the other keeps playing
-- [ ] No ELO change results from a shard crash (games are only recorded on completion)
-- [ ] **Moved here from S3:** matchmaking works with two shards running — the two players
+- [x] Two shards run; new games are distributed between them
+- [x] A spectator can join a room on **either** shard from **either** gateway
+- [x] Killing one shard voids only its games; the other keeps playing
+- [x] No ELO change results from a shard crash (games are only recorded on completion)
+- [x] **Moved here from S3:** matchmaking works with two shards running — the two players
       may land on either
-- [ ] **Moved here from S3:** reconnect works after switching gateways
+- [x] **Moved here from S3:** reconnect works after switching gateways
+- [x] And the standing one: `python server_main.py --solo` still runs the whole game in
+      one process, verified live over two real sockets after the split deepened
 
 The last two were written as S3's, and they are not S3's to meet. S3 gave the shards one
 queue, one id space and one directory, all correct under concurrent access — but a second
@@ -749,5 +773,14 @@ live, and both were verified with headless clients over real sockets instead. Pl
 (`config.SERVER_LOG`), so `docker compose logs server` shows nothing. S5 already owns the
 logging change; a stream handler alongside the file one is the fix.
 
-**Next:** S4 — and its first job is addressing rather than allocation (see its exit
-criteria): while `lobby.cmd` is one subject for every shard, there can only be one shard.
+**Complete: S4.** There can be more than one shard. A connection belongs to exactly one of
+them, chosen by a queue group and told to the gateway in the envelope; a match hands its
+game to whichever shard the allocator picks, carrying both players with it; a room id
+typed at any shard is answered by the one running it; and a shard that stops reporting
+leaves the pool without anybody noticing it died. Compose runs two replicas that name
+themselves after their containers. 776 tests, 100% coverage, ruff clean.
+
+**Next:** S5 — observability and load testing, which is where the numbers this whole
+design was derived from finally get measured rather than estimated. Its first task is
+already known and written down above: in a container the server logs to a *file*, so
+`docker compose logs` shows nothing.

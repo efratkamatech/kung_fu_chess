@@ -216,7 +216,7 @@ class Shard:
         if game_id is None or self._following.get(conn_id) == game_id:
             return None
         self._following[conn_id] = game_id
-        return str(game_id)
+        return self._hub.room_key(game_id)
 
     def _publish(self, subject: str, text: str) -> None:
         """The lobby's room sink: one publish for a whole room, whoever is in it."""

@@ -78,7 +78,11 @@ services:
       DATABASE_URL: postgresql://kfchess:kfchess@postgres:5432/kfchess
       NATS_URL: nats://nats:4222
       REDIS_URL: redis://redis:6379/0
-      KFC_SHARD_ID: sh1
+      # No KFC_SHARD_ID: each replica names itself after its container, so two of them
+      # get two names without anybody assigning any. Setting one here would give both
+      # replicas the same name, and each would receive the other's connections.
+    deploy:
+      replicas: 2
     # No ports. Nothing outside this network can reach the shard, and nothing needs to:
     # players talk to a gateway, and the gateway talks to the bus. That is the split.
     restart: unless-stopped

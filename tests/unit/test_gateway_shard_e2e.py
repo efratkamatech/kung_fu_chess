@@ -12,7 +12,7 @@ what the players see, and the shard must still refuse a move from someone who ha
 """
 
 from kfchess.bus import subjects
-from kfchess.config import MS_PER_CELL
+from kfchess.config import MS_PER_CELL, SHARD_HEARTBEAT_MS, START_RATING
 from kfchess.bus.envelope import decode_to_client
 from kfchess.bus.message_bus import InProcessMessageBus
 from kfchess.gateway.app import Gateway
@@ -34,6 +34,7 @@ from kfchess.shared.protocol import (
     MoveStarted,
     Notice,
     Play,
+    Reconnected,
     Rejected,
     Resume,
     Settled,
@@ -175,12 +176,13 @@ def test_a_spectator_cannot_move_but_the_game_carries_on():
 def test_the_room_is_published_once_however_many_are_in_it():
     """The property the whole split is for: three people, one message on the wire."""
     bus, _, _, white, _, _ = open_room_with_a_spectator()
-    before = len(bus.sent_to(subjects.room_inbox("0")))
+    every_room = subjects.room_inbox("*")
+    before = len(bus.sent_to(every_room))
 
     white.send(Move("WRa1a3"))
 
     # One sound and one delta -- not one of each per person in the room.
-    assert len(bus.sent_to(subjects.room_inbox("0"))) - before == 2
+    assert len(bus.sent_to(every_room)) - before == 2
 
 
 def test_a_spectator_leaving_does_not_disturb_the_game():
@@ -443,3 +445,88 @@ def test_a_room_id_that_belongs_to_nobody_is_still_refused():
     joiner.send(JoinRoom("ZZZZZZ"))
 
     assert joiner.of_type(Notice)[-1].reason is NoticeReason.NO_SUCH_ROOM
+
+
+# --- S4 exit criteria ----------------------------------------------------------
+
+def test_new_games_are_distributed_between_the_shards():
+    """Least loaded wins, so the second game does not land on top of the first."""
+    bus, gateway, first, second = two_shards()
+    hosts = []
+    for pair in range(3):
+        white = sought(gateway, f"White{pair}")
+        sought(gateway, f"Black{pair}")
+        hosts.append(owner_of(bus, white.conn_id))
+        for shard in (first, second):
+            shard.tick(SHARD_HEARTBEAT_MS)  # each reports its new load
+
+    assert set(hosts) == {"sh1", "sh2"}
+
+
+def test_a_spectator_reaches_a_room_from_a_second_gateway():
+    """Neither gateway knows the other exists, and neither needs to."""
+    bus, gateway, _, _, creator = two_shards_with_a_room()
+    room_id = creator.of_type(Seated)[-1].room_id
+    opponent = logged_in(gateway, "Dan")
+    opponent.send(JoinRoom(room_id))  # black; the seats are full after this
+    elsewhere = Gateway(bus, "gw2")
+
+    watcher = logged_in(elsewhere, "Sam")
+    watcher.send(JoinRoom(room_id))
+    creator.send(Move("WRa1a3"))
+
+    assert watcher.of_type(Seated)[-1].color is None       # seated as a spectator
+    assert [m.to_sq for m in watcher.of_type(MoveStarted)] == ["a3"]
+
+
+def test_killing_one_shard_leaves_the_other_playing():
+    """Its games are gone with it. Nobody else's are, and nothing has to be repaired."""
+    bus, gateway, first, second = two_shards()
+    doomed = sought(gateway, "Efrat")
+    sought(gateway, "Dan")
+    for shard in (first, second):
+        shard.tick(SHARD_HEARTBEAT_MS)  # loads reported, so the next game goes elsewhere
+    survivor_white = sought(gateway, "Noa")
+    sought(gateway, "Sam")
+    assert owner_of(bus, doomed.conn_id) != owner_of(bus, survivor_white.conn_id)
+    survivor = first if owner_of(bus, survivor_white.conn_id) == "sh1" else second
+
+    survivor_white.send(Move("WRa1a3"))
+    survivor.tick(2 * MS_PER_CELL)  # the other shard is simply never ticked again
+
+    assert [m.at_sq for m in survivor_white.of_type(Settled)] == ["a3"]
+    assert doomed.of_type(Settled) == []  # and the lost game went nowhere
+
+
+def test_a_game_lost_with_its_shard_changes_nobody_rating():
+    """Results are written when a game ends. A game that stopped never ended."""
+    bus = InProcessMessageBus()
+    gateway = Gateway(bus, "gw1")
+    users = UserStore(":memory:")
+    store = InMemoryKeyValueStore()
+    Shard(bus, a_board, users, SharedState.on(store, "sh1"))
+    Shard(bus, a_board, users, SharedState.on(store, "sh2"))
+    white = sought(gateway, "Efrat")
+    sought(gateway, "Dan")
+    white.send(Move("WRa1a3"))  # a game genuinely in progress...
+
+    del bus, gateway  # ...and then the shard running it is gone
+
+    assert users.get_rating("Efrat") == START_RATING
+    assert users.get_rating("Dan") == START_RATING
+
+
+def test_reconnecting_through_a_different_gateway_finds_the_seat():
+    """The directory is shared, so the seat is found from anywhere it is asked about."""
+    bus, gateway, first, second = two_shards()
+    white = sought(gateway, "Efrat")
+    black = sought(gateway, "Dan")
+    token = black.of_type(Seated)[-1].seat_token
+    black.leave()
+
+    elsewhere = Gateway(bus, "gw2")
+    returner = Client(elsewhere)
+    returner.send(Resume("Dan", token))
+
+    assert returner.of_type(Welcome)[-1].color is Color.BLACK
+    assert white.of_type(Reconnected) != []

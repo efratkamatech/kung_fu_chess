@@ -80,6 +80,7 @@ def error_message(code: str) -> str:
 # runs from any working directory. The text/VPL path never touches these, so their
 # absence on the grader (which uploads only main.py + src/) is harmless.
 import os  # noqa: E402  (for the few settings that come from the environment)
+import socket  # noqa: E402  (a shard's default name; see SHARD_ID)
 from pathlib import Path  # noqa: E402  (kept near the paths it supports)
 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
@@ -162,7 +163,12 @@ NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
 # id names the subjects only it serves. They must be unique per replica, which is what
 # the orchestrator is for -- these defaults are for a single machine.
 GATEWAY_ID = os.environ.get("KFC_GATEWAY_ID", "gw1")
-SHARD_ID = os.environ.get("KFC_SHARD_ID", "sh1")
+# A shard's name, and it has to be its own: it is half of the subject its connections
+# publish to, so two shards answering to one name would each receive the other's traffic.
+# The default is the machine's hostname, which in a container is the container id -- so a
+# replica set gets distinct names without anybody assigning them. Dots become dashes: a
+# subject is dot-separated, and a hostname with one in it would silently become two tokens.
+SHARD_ID = os.environ.get("KFC_SHARD_ID") or f"sh-{socket.gethostname().replace('.', '-')}"
 
 # --- Accounts and rating (server-side) ---------------------------------------
 # Where the users database lives (username, password hash, rating). Resolved at the

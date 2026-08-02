@@ -1179,6 +1179,7 @@ them with measurements.
 | Move history? | **Object storage, not Postgres** | 5M rows/second does not fit a relational DB |
 | Is one server enough? | **No** — ~10,000 shards + ~350 gateways | estimate, to be validated by load test |
 | Where is each player? | **Redis**: `player → {room, shard}` | replaces a linear scan with O(1) |
+| How does a message find its shard? | **The connection is claimed**, and the gateway is told | a queue group hands each new socket to exactly one shard; a seat moves the claim to whoever runs the game |
 | Everyone plays everyone? | **Global Matchmaker**, not per-shard | otherwise 10,000 disconnected pools |
 | Traffic from moves? | **3.2 Gbps — a little** | a third of one NIC |
 | Traffic from broadcast? | **3.5 Tbps — far too much** | full snapshot at 20 Hz |
