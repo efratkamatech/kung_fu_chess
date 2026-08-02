@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from time import perf_counter
 from hmac import compare_digest
 from typing import Callable, List, Optional, Tuple
 
@@ -28,6 +29,7 @@ from kfchess.bus import envelope, subjects
 from kfchess.config import SNAPSHOT_RESYNC_MS
 from kfchess.model.board import Board
 from kfchess.model.color import Color
+from kfchess.obs.measures import GAME_TICK_US, MATCHES, MOVE_HANDLING_MS
 from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
     CreateRoom,
@@ -431,6 +433,7 @@ class Lobby:
 
     def _start_game(self, white_id: int, black_id: int) -> None:
         """Create a game, seat the two matched clients, and show them the board."""
+        MATCHES.inc()
         game_id = self._new_game()
         self._seat(white_id, game_id)  # first assign_color -> WHITE
         self._seat(black_id, game_id)  # second -> BLACK
@@ -595,6 +598,7 @@ class Lobby:
 
     def _on_move(self, client_id: int, cmd: str) -> None:
         """Apply a move to the sender's game, or refuse it, telling only that game."""
+        started = perf_counter()
         client = self._clients[client_id]
         if client.session_id is None or client.color is None:
             self._send(client_id, Rejected(RejectReason.NOT_A_PLAYER))  # spectators cannot move
@@ -608,6 +612,10 @@ class Lobby:
         _log.info("game %d: %s played %s", client.session_id, client.color.value, cmd)
         self._maybe_record_result(client.session_id)
         self._broadcast(client.session_id)
+        # The server's share of how quickly a move is felt: from the command arriving to
+        # its delta being on the wire. The rest of what a player experiences is two
+        # network hops, which this side cannot see and the load bot measures instead.
+        MOVE_HANDLING_MS.observe((perf_counter() - started) * 1000)
 
     # --- time ----------------------------------------------------------------
 
@@ -625,7 +633,13 @@ class Lobby:
         numerous as the players themselves.
         """
         for game_id, game in self._games.items():
+            # Timed around the session alone -- the engine advancing, the arbiter
+            # resolving -- because that is the cost the "500 games to a shard" estimate
+            # was built from. The broadcasting below it is charged to the network, not
+            # to the game.
+            started = perf_counter()
             game.session.tick(dt_ms)
+            GAME_TICK_US.observe((perf_counter() - started) * 1_000_000)
             self._maybe_record_result(game_id)
             self._broadcast(game_id)
             self._resync_if_due(game_id, dt_ms)

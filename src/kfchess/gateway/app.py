@@ -35,6 +35,7 @@ from kfchess.bus.envelope import (
     encode,
 )
 from kfchess.gateway.router import ConnectionRouter, Send
+from kfchess.obs.measures import BYTES_OUT, CONNECTIONS
 
 _log = logging.getLogger(__name__)  # silent until configure_logging runs
 
@@ -55,6 +56,7 @@ class Gateway:
     def connect(self, send: Send) -> str:
         """Register an open socket and tell the shard it exists."""
         conn_id = self._router.open(send)
+        CONNECTIONS.set(len(self._router))
         _log.info("connection %s opened", conn_id)
         self._report(ClientEventKind.CONNECTED, conn_id)
         return conn_id
@@ -84,6 +86,7 @@ class Gateway:
         for room in self._router.close(conn_id):
             self._bus.unsubscribe(subjects.room_inbox(room))
             _log.info("no longer following room %s", room)
+        CONNECTIONS.set(len(self._router))
         _log.info("connection %s closed", conn_id)
         if owner is None:
             self._report(ClientEventKind.DISCONNECTED, conn_id)  # nobody claimed her
@@ -114,6 +117,7 @@ class Gateway:
             self._follow(conn_id, reply.follow_room)
         send = self._router.to_connection(conn_id)
         if send is not None and reply.text:  # it may have closed; and a claim carries no text
+            BYTES_OUT.inc(len(reply.text))
             send(reply.text)
 
     def _claim(self, conn_id: str, shard_id: str) -> None:
@@ -137,6 +141,10 @@ class Gateway:
         """
         room = subjects.room_of(subject)
         for send in self._router.in_room(room):
+            # Counted here, per socket, because here is where one message crossing the
+            # network becomes one copy per player -- which is the number the design's
+            # bytes-per-connection claim is about.
+            BYTES_OUT.inc(len(payload))
             send(payload)
 
     @property

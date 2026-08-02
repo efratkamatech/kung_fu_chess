@@ -37,6 +37,7 @@ from kfchess.bus.envelope import (
     decode_start_game,
     encode,
 )
+from kfchess.obs.measures import ACTIVE_GAMES
 from kfchess.server.lobby import Lobby, NewBoard
 from kfchess.services.shared import SharedState
 from kfchess.server.user_store import UserStore
@@ -227,6 +228,7 @@ class Shard:
     def tick(self, dt_ms: int) -> None:
         """Advance every game this shard is running, and say that it is still running."""
         self._hub.tick(dt_ms)
+        ACTIVE_GAMES.set(self._hub.game_count)
         self._heartbeat(dt_ms)
 
     def _heartbeat(self, dt_ms: int) -> None:
