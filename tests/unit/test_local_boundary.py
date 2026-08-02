@@ -49,6 +49,12 @@ FORBIDDEN = (
     "kfchess.services",
     "kfchess.gateway",
     "kfchess.client",
+    # The core may not import the observability package either. That rule was written
+    # into `obs/measures.py` when the metrics were added and enforced by nothing but
+    # care, which is precisely the arrangement the dependency law exists to replace:
+    # timing a game from inside the engine is one convenient import away, and the engine
+    # has never imported anything above itself.
+    "kfchess.obs",
     "kfchess.bus.message_bus",
     "kfchess.bus.envelope",
     "kfchess.bus.subjects",
@@ -57,6 +63,18 @@ FORBIDDEN = (
     "websockets",
     "psycopg",
 )
+
+
+def forbids(module: str) -> bool:
+    """Whether ``module`` is one of the forbidden packages, or lives inside one.
+
+    A plain ``startswith`` is not this test: ``kfchess.obs`` would then also forbid
+    ``kfchess.observers``, which is the game's own score and move log and belongs
+    exactly where it is. A package boundary ends at a dot or at the end of the name.
+    """
+    return any(
+        module == package or module.startswith(package + ".") for package in FORBIDDEN
+    )
 
 
 def imported_modules(path: Path):
@@ -82,7 +100,7 @@ def local_sources():
 @pytest.mark.parametrize("path", local_sources(), ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_the_local_game_does_not_import_the_infrastructure(path):
     offenders = [
-        module for module in imported_modules(path) if module.startswith(FORBIDDEN)
+        module for module in imported_modules(path) if forbids(module)
     ]
     assert offenders == [], (
         f"{path.parent.name}/{path.name} imports {offenders}. The offline game has to "

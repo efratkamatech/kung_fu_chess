@@ -198,7 +198,16 @@ class Lobby:
         try:
             message = decode(text)
         except ValueError:
-            return  # not valid JSON, or an unknown message type
+            # Dropped, not raised: a malformed message is what an attacker sends first,
+            # and a server that dies of one is a server anybody can turn off. But it
+            # leaves a trace -- an input that vanishes without one is indistinguishable
+            # from a bug in this dispatch, which is a debugging session nobody needs.
+            # The payload itself is not logged: it is untrusted text of unbounded length.
+            _log.warning(
+                "unreadable message dropped",
+                extra={"client": client_id, "bytes": len(text)},
+            )
+            return
         if isinstance(message, Login):
             self._on_login(client_id, message.username, message.password)
         elif isinstance(message, Resume):

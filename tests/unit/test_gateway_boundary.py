@@ -29,6 +29,18 @@ FORBIDDEN = ("kfchess.engine", "kfchess.model", "kfchess.rules", "kfchess.moveme
              "kfchess.services", "redis")
 
 
+def forbids(module: str) -> bool:
+    """Whether ``module`` is one of the forbidden packages, or lives inside one.
+
+    A plain ``startswith`` is not this test: ``kfchess.obs`` would then also forbid
+    ``kfchess.observers``, which is the game's own score and move log and belongs
+    exactly where it is. A package boundary ends at a dot or at the end of the name.
+    """
+    return any(
+        module == package or module.startswith(package + ".") for package in FORBIDDEN
+    )
+
+
 def imported_modules(path: Path):
     """Every module named by an import anywhere in ``path``, lazy ones included."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -43,9 +55,7 @@ def imported_modules(path: Path):
 @pytest.mark.parametrize("path", sorted(GATEWAY.glob("*.py")), ids=lambda p: p.name)
 def test_the_gateway_does_not_import_the_game(path):
     offenders = [
-        module
-        for module in imported_modules(path)
-        if module.startswith(FORBIDDEN)
+        module for module in imported_modules(path) if forbids(module)
     ]
     assert offenders == [], (
         f"{path.name} imports {offenders}. The gateway moves text between a socket and "

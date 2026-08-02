@@ -123,6 +123,10 @@ class NetClient:
         try:
             message = decode(text)
         except ValueError:
+            # Same rule as the server's dispatch: drop it, but say so. A client that
+            # silently ignores something the server sent will be debugged by staring at
+            # the server.
+            _log.warning("unreadable message dropped (%d bytes)", len(text))
             return
         with self._lock:
             if isinstance(message, GAME_MESSAGES):
