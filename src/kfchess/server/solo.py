@@ -66,9 +66,15 @@ async def serve(  # pragma: no cover  (irreducible async socket + timer I/O)
     same two coroutines the split deployment runs; they are simply in the same process
     here, and the bus between them is a function call.
     """
+    from kfchess.config import OBS_PORT
     from kfchess.gateway.app import listen
+    from kfchess.obs.endpoint import serve_observability
     from kfchess.server.shard import run_games
 
+    # The same two paths a deployed shard answers. There is no Prometheus on a laptop,
+    # and that is exactly why it is worth having: `curl localhost:9100/metrics` is how
+    # anybody sees the numbers at all without bringing up a monitoring stack first.
+    serve_observability(OBS_PORT)
     gateway, shard = build(new_board)
     _log.info("solo server starting on %s:%s", host, port)
     async with await listen(gateway, host, port):

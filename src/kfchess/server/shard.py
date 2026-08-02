@@ -313,10 +313,12 @@ async def serve(  # pragma: no cover  (irreducible async NATS + timer I/O)
     import asyncio
 
     from kfchess.bus.message_bus import connect
-    from kfchess.config import NATS_URL, REDIS_URL, SHARD_ID
+    from kfchess.config import NATS_URL, OBS_PORT, REDIS_URL, SHARD_ID
+    from kfchess.obs.endpoint import serve_observability
     from kfchess.services.shared import SharedState
     from kfchess.services.store import connect as connect_store
 
+    serve_observability(OBS_PORT)
     bus = await connect(nats_url or NATS_URL)
     shared = SharedState.on(connect_store(REDIS_URL), SHARD_ID)
     shard = Shard(bus, new_board, UserStore(), shared)

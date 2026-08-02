@@ -206,8 +206,10 @@ async def serve(  # pragma: no cover  (irreducible async socket + NATS I/O)
     two — the same thin shell ``shard.serve`` is.
     """
     from kfchess.bus.message_bus import connect
-    from kfchess.config import NATS_URL
+    from kfchess.config import NATS_URL, OBS_PORT
+    from kfchess.obs.endpoint import serve_observability
 
+    serve_observability(OBS_PORT)
     bus = await connect(nats_url or NATS_URL)
     async with await listen(Gateway(bus, gateway_id), host, port):
         await bus.run()  # forever: performs the queued publishes and subscriptions

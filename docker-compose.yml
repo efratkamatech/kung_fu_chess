@@ -105,5 +105,18 @@ services:
       - "8765:8765"
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v2-latest
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      # Published so the graphs can be looked at from the host. Nothing scrapes
+      # Prometheus, so this is for a person, and only during a load test.
+      - "9090:9090"
+    depends_on:
+      - shard
+      - gateway
+    restart: unless-stopped
+
 volumes:
   pgdata:

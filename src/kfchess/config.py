@@ -233,6 +233,12 @@ ROOM_ID_MAX_ATTEMPTS = 10
 # comes back into circulation without anything having to notice the crash.
 ROOM_TTL_S = 300
 
+# --- Observability (S5) ------------------------------------------------------
+# Where /metrics and /healthz are answered. Its own port, not the game's: what a scraper
+# and an orchestrator ask for has nothing to do with what a player connects to, and one
+# of the two is exposed to the world while the other must not be.
+OBS_PORT = int(os.environ.get("KFC_OBS_PORT", "9100"))
+
 # --- Logging (M6, S5) --------------------------------------------------------
 # Whether logs are written as JSON objects or as human-readable lines. A person tailing
 # one machine wants a line; ten shards and three gateways being searched at once want
