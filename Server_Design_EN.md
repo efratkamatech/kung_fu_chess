@@ -18,6 +18,7 @@ architecture is mapped explicitly onto code that already exists and works.
 
 ## Table of contents
 
+0. [The user, the budget, and the assumptions](#0-the-user-the-budget-and-the-assumptions)
 1. [Where we are today](#1-where-we-are-today)
 2. [The four answers](#2-the-four-answers)
    - [2.1 Which database for 100M users?](#21-which-database-for-100m-registered-users-is-sqlite-suitable)
@@ -34,7 +35,74 @@ architecture is mapped explicitly onto code that already exists and works.
 
 ---
 
+## 0. The user, the budget, and the assumptions
+
+### Who this is for, and what she gets
+
+> Someone with ten spare minutes who wants a game of chess **right now**, against a
+> stranger of roughly her own strength, without waiting for anybody to think. She presses
+> Play and is moving pieces within seconds; nobody's turn ever blocks hers.
+
+Everything below is justified by that sentence, and it is what the cuts are made against.
+The two halves of it pull in different directions and both are load-bearing: *within
+seconds* is why matchmaking may not be fussy, and *nobody's turn blocks hers* is why the
+server is authoritative and why a move has a latency budget rather than a best effort.
+
+### The latency budget
+
+"As fast as possible" is a missing number. The budget, set before the code and checked
+against it afterwards:
+
+| | Budget | Measured (S5) |
+|---|---|---|
+| A move is seen by the opponent, p99 | **≤ 100 ms** end to end | ~1 ms of it is the server |
+| The server's own share of that | **≤ 10 ms** | **p99 ≤ 1 ms**, at every load tested |
+| Getting into a game after pressing Play | ≤ 5 s | ~60 s under a 1,000-player rush — **missed**, see §2 |
+
+The 100 ms is not a round number picked for looking tidy: below roughly that, a real-time
+player attributes a delay to her own hand rather than to the game. Above it, she starts
+aiming ahead of where the piece is.
+
+**And it has to be symmetric, not merely small.** Two players are in the same game, so a
+system that served one of them in 20 ms and the other in 120 ms would be *unfair* rather
+than slow — one of them is simply playing an earlier version of the board. This is why a
+room's traffic is one publish fanned out at the gateways rather than a message composed
+per player: both players are served from the same message, so their delays differ only by
+the last hop to each of them.
+
+### Assumptions
+
+Every one of these is a guess. They are on this table so a reader can argue with a line
+instead of with the whole document — and so that when reality contradicts one, what has
+to be revisited is written down rather than re-derived from memory.
+
+| Assumption | Basis (why educated) | What breaks if wrong | How we would find out |
+|---|---|---|---|
+| A game lasts ~60 s | Midpoint of the stated 30–90 s | Game churn, and with it the "nothing is worth saving" failure model | Measure game duration — the shard already times every tick |
+| A player moves every ~2 s | Given in the requirements | The whole traffic estimate in §2.3 | **Found out (S5):** measured at that rate, 470–490 B/s per player |
+| "10M concurrent" means sockets held, not games in progress | Domain: players in the lobby, in the queue and watching all hold a socket | The gateway count (10M ÷ 30,000) is really a *socket* count; games are fewer | **Both are now published:** `kfc_connections` against `kfc_active_games` |
+| One game costs ~50 µs a tick | Estimated from the engine's work per tick | Games per shard, and therefore the shard count | **Found out (S5): ~7 µs.** Seven times cheaper; the estimate was pessimistic |
+| ~500 games fit on a shard | Arithmetic on the 50 µs above | The ~10,000-shard figure | **Found out (S5): ~30–40** — and not for CPU reasons. See §2 |
+| Logging in is cheap enough to ignore | Never stated, which is the point — it was assumed by omission | Admission rate under a rush | **Found out (S5): 36.5 ms of PBKDF2 each, ~12/s per shard.** The costliest wrong assumption in this document |
+| A player notices delay above ~100 ms | Typical for real-time browser games | If it is really 50 ms, a broker hop on the move path stops being affordable | Playtest, then read `kfc_move_handling_ms` |
+| A full snapshot every 10 s is enough to repair drift | Chosen in S0; a client rebuilding from deltas can only drift so far | Bytes per player — the resync is the *larger* half of the bill | **Confirmed (S5):** raising the interval is the cheapest lever if traffic ever binds |
+| Nothing in Redis is worth surviving a restart | Every key there has a TTL in minutes; accounts and ratings are in PostgreSQL | Redis would need persistence and HA, which is a different cost class | Restart Redis under load and see whether anything unrecoverable is lost |
+| A shard crash costs ≤ 90 s of play and no rating | Games are short, and a result is written only on completion | Players would lose rating to an outage they did not cause | **Tested:** `test_a_game_lost_with_its_shard_changes_nobody_rating` |
+
+Two of these were wrong, and the direction matters. The engine assumption was
+**pessimistic** — being wrong there means headroom nobody counted on. The login
+assumption was made by *not making it*, which is the failure mode this table exists to
+prevent: it was never written down, so it was never checked, and it turned out to be the
+number that binds.
+
+---
+
 ## 1. Where we are today
+
+> **This section describes the starting point** — the single-process server as it stood
+> when this document was written, which is what the rest of the document reasons *from*.
+> Stages S0–S5 have since been built and it no longer looks like this; §7 tracks what
+> changed, and the current layout is at the end of this section.
 
 The server in this project **works and is feature-complete**: six milestones shipped
 (event bus, authoritative server + thin client, login, passwords + SQLite + ELO,
@@ -126,6 +194,25 @@ This was a deliberate, documented decision — `docs/architecture.md` says
 | 7 | One `sqlite3.Connection`, `check_same_thread=True`, one file | `user_store.py` |
 | 8 | Rooms and the matchmaking queue are in-memory dicts — a restart drops every live game | `lobby.py`, `room_manager.py` |
 | 9 | No per-game isolation — one slow `resolve()` blocks the loop for every game | `lobby.py:303` |
+
+### And what it looks like now (after S0–S5)
+
+Kept here so that a reader comparing this document against the repository is not misled:
+three of the modules named above **no longer exist**, and the test count is 810 rather
+than ~470.
+
+| Then | Now | What happened |
+|---|---|---|
+| `game_server.py` | `gateway/app.py` + `server/shard.py` | S2 split the sockets off the games |
+| `matchmaker.py` | `services/matchmaker.py` | S3 moved the queue where every shard can see it |
+| `room_manager.py` | `services/rooms.py` | S3 made a room id unique across shards, not just one |
+| — | `services/{store,directory,allocator,shared}.py` | S3–S4: the shared state, and who runs what |
+| — | `server/solo.py` | The same gateway, shard and lobby in one process, with no infrastructure |
+| — | `obs/` | S5: the numbers this document was sized on, measured |
+
+Of the nine pressure points above, **1–5 and 8 are addressed**; 6 was fixed in S0
+(elapsed time, not a nominal 50 ms); 7 became PostgreSQL in S1. **9 is the one that
+remains**, and S5 measured what it costs: see §2.
 
 ---
 
