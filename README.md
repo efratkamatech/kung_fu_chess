@@ -78,8 +78,11 @@ Docker and connect exactly the same clients:
 docker compose up --build
 ```
 
-Compose runs five services: `gateway` (the only one with a published port), `shard` (two
-replicas), `nats`, `redis`, and `postgres`. The shards name themselves after their
+Compose runs seven services: `gateway` (the only one with a published port), `shard` and
+`auth` (two replicas each), `nats`, `redis`, `postgres`, and `prometheus`. `auth` exists
+as its own process for a measured reason: checking one password costs 36.5 ms of CPU, and
+while that ran on the thread running the games it capped the whole server at about twelve
+admissions a second. The shards name themselves after their
 containers, so neither is configured to know it is one of two — new games are spread
 across whichever are alive, a game can be handed to either as it starts, and a room id
 typed at one is answered by whichever is running it.

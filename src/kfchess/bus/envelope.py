@@ -186,6 +186,67 @@ class JoinGame:
         return cls(Seatee.from_dict(data["joiner"]), data["room_id"])
 
 
+@dataclass(frozen=True)
+class AuthRequest:
+    """Shard -> Auth: check this password, and tell me who she turned out to be.
+
+    The password travels on the bus, and that is a consequence worth naming rather than
+    burying. It is forced: the gateway may not read the messages it carries — it cannot
+    tell a login from a move — so it cannot route logins anywhere special, and the shard
+    is the first component that knows this text was a login at all. The alternative is a
+    gateway that parses, which costs more than this does.
+
+    ``shard_id`` rides along because the answer has to come back to the shard that asked,
+    and whichever Auth replica picks this up has never heard of that connection.
+    """
+
+    conn_id: str
+    username: str
+    password: str
+    shard_id: str
+
+    def to_dict(self) -> dict:
+        return {
+            "conn_id": self.conn_id,
+            "username": self.username,
+            "password": self.password,
+            "shard_id": self.shard_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AuthRequest":
+        return cls(
+            data["conn_id"], data["username"], data["password"], data["shard_id"]
+        )
+
+
+@dataclass(frozen=True)
+class AuthResult:
+    """Auth -> shard: this is who she is, or ``None`` if she could not prove it.
+
+    ``rating`` doubles as the verdict — a number means the password checked out, ``None``
+    means it did not. One field rather than a flag and a number that could disagree.
+
+    No password comes back, and nothing else about the account does either: what the
+    shard needs to seat somebody is a name and a rating.
+    """
+
+    conn_id: str
+    username: str
+    rating: Optional[int]
+
+    def to_dict(self) -> dict:
+        return {
+            "conn_id": self.conn_id,
+            "username": self.username,
+            "rating": self.rating,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AuthResult":
+        return cls(data["conn_id"], data["username"], data["rating"])
+
+
 def encode(envelope) -> str:
     """Pack an envelope into the JSON string that goes on the wire."""
     return json.dumps(envelope.to_dict())
@@ -209,3 +270,13 @@ def decode_start_game(payload: str) -> StartGame:
 def decode_join_game(payload: str) -> JoinGame:
     """Read a :class:`JoinGame` off a shard's own join-game subject."""
     return JoinGame.from_dict(json.loads(payload))
+
+
+def decode_auth_request(payload: str) -> AuthRequest:
+    """Read an :class:`AuthRequest` off the shared auth subject."""
+    return AuthRequest.from_dict(json.loads(payload))
+
+
+def decode_auth_result(payload: str) -> AuthResult:
+    """Read an :class:`AuthResult` off a shard's own auth subject."""
+    return AuthResult.from_dict(json.loads(payload))

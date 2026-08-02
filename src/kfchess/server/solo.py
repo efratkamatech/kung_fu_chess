@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 
+from kfchess.auth.service import AuthService
 from kfchess.bus.message_bus import InProcessMessageBus
 from kfchess.config import GATEWAY_ID
 from kfchess.gateway.app import Gateway
@@ -50,7 +51,13 @@ def build(new_board: NewBoard, users: UserStore = None):
     with the same two objects.
     """
     bus = InProcessMessageBus()
-    shard = Shard(bus, new_board, users if users is not None else UserStore(), SharedState.on())
+    users = users if users is not None else UserStore()
+    # The same Auth service the split deployment runs, on the same bus. It buys no
+    # parallelism here -- one process, one thread, so the password check still lands on
+    # the loop that runs the games -- and that is the point: the *path* a login takes is
+    # identical in both deployments, so it is exercised every time anybody plays locally.
+    AuthService(bus, users)
+    shard = Shard(bus, new_board, users, SharedState.on())
     return Gateway(bus, GATEWAY_ID), shard
 
 

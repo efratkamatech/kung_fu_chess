@@ -34,6 +34,7 @@ from kfchess.bus.envelope import (
     ClientEventKind,
     Seatee,
     ToClient,
+    decode_auth_result,
     decode_client_event,
     decode_join_game,
     decode_start_game,
@@ -66,7 +67,12 @@ class Shard:
         self._since_heartbeat_ms = 0
         self._allocator.announce(self._shard_id, 0)
         self._hub = Lobby(
-            new_board, users, shared, to_room=self._publish, to_shard=self._publish
+            new_board,
+            users,
+            shared,
+            to_room=self._publish,
+            to_shard=self._publish,
+            to_auth=self._publish,
         )
         # conn_id -> the lobby's own client number, and the room that connection has
         # already been told to follow. Both are dropped when the socket closes.
@@ -93,6 +99,8 @@ class Shard:
         self._bus.subscribe(
             subjects.shard_join_game(self._shard_id), self._on_join_game
         )
+        # ...and the answers to the passwords this shard sent away to be checked.
+        self._bus.subscribe(subjects.shard_auth(self._shard_id), self._on_auth_result)
 
     # --- what the gateways report ---------------------------------------------
 
@@ -132,6 +140,21 @@ class Shard:
         self._hub.start_game(
             self._client_for(request.white), self._client_for(request.black)
         )
+
+    def _on_auth_result(self, subject: str, payload: str) -> None:
+        """Somebody's password has been checked, elsewhere, and this is the verdict.
+
+        The connection may have closed in the meantime — a password check is 36 ms, which
+        is ample — so an answer for a connection this shard no longer holds is dropped
+        here rather than in the lobby, which has already forgotten her.
+        """
+        result = decode_auth_result(payload)
+        client_id = self._client_of.get(result.conn_id)
+        if client_id is None:
+            _log.info("auth answer for a connection that has gone",
+                      extra={"conn": result.conn_id})
+            return
+        self._hub.authenticated(client_id, result.username, result.rating)
 
     def _on_join_game(self, subject: str, payload: str) -> None:
         """Somebody typed a room id at another shard, and the room is one of ours."""

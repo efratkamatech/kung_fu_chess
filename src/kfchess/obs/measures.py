@@ -12,6 +12,7 @@ in the design it is checking does not live only in somebody's memory.
 | ``kfc_move_handling_ms`` | the server's share of a move being felt |
 | ``kfc_bytes_out_total`` | ~325 B/s to a player (~2.6 kbps) |
 | ``kfc_matches_total`` | the matchmaker, not the engine, is the hot path |
+| ``kfc_logins_total`` / ``kfc_login_ms`` | that moving the password check off the game thread raised admissions |
 
 Two of these are named differently from the implementation plan, and deliberately.
 
@@ -57,6 +58,19 @@ MOVE_HANDLING_MS = REGISTRY.histogram(
 MATCHES = REGISTRY.counter(
     "kfc_matches_total",
     "Pairs of players matched into a game since this shard started.",
+)
+
+# --- what the auth service is doing --------------------------------------------
+
+LOGINS = REGISTRY.counter(
+    "kfc_logins_total",
+    "Passwords checked since this service started, accepted or not.",
+)
+
+LOGIN_MS = REGISTRY.histogram(
+    "kfc_login_ms",
+    "Milliseconds to check one password. Nearly all of it is PBKDF2, by design.",
+    buckets=LATENCY_BUCKETS_MS,
 )
 
 # --- what a gateway is doing ---------------------------------------------------

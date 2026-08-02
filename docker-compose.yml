@@ -89,6 +89,25 @@ services:
     # players talk to a gateway, and the gateway talks to the bus. That is the split.
     restart: unless-stopped
 
+  auth:
+    build: .
+    command: ["python", "auth_main.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://kfchess:kfchess@postgres:5432/kfchess
+      NATS_URL: nats://nats:4222
+      KFC_LOG_JSON: "1"
+    # Two, because this is the service that decides how many people can be let in per
+    # second and it is the easiest thing in the system to add more of: it holds no
+    # sockets, runs no games, and remembers nothing between one password and the next.
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
   gateway:
     build: .
     command: ["python", "gateway_main.py"]

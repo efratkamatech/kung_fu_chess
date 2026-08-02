@@ -874,3 +874,19 @@ def test_a_joiner_sent_here_for_a_room_that_has_since_ended_is_told_so():
 
     assert joiner.received[-1] == Notice(NoticeReason.NO_SUCH_ROOM)
     assert of_type(joiner, Seated) == []
+
+
+def test_an_answer_for_a_client_who_left_during_the_check_is_dropped():
+    """A password check is 36 ms away now, which is ample time for a socket to close.
+
+    Nothing could happen in the middle of a login when the hashing was inline. It can
+    now, and the answer arriving for somebody who has gone must not resurrect her.
+    """
+    hub = make_lobby()
+    client = FakeClient()
+    client_id = hub.connect(client.send)
+    hub.disconnect(client_id)
+
+    hub.authenticated(client_id, "Efrat", START_RATING)
+
+    assert client.received == []

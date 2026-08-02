@@ -98,6 +98,7 @@ class Lobby:
         shared: Optional[SharedState] = None,
         to_room: Optional[ToRoom] = None,
         to_shard: Optional[ToRoom] = None,
+        to_auth: Optional[ToRoom] = None,
     ) -> None:
         self._new_board = new_board
         self._users = users
@@ -111,6 +112,10 @@ class Lobby:
         # at all -- a lobby driven directly by a test -- and such a lobby can only seat
         # players it is already holding.
         self._to_shard = to_shard
+        # And how it reaches the service that checks passwords. ``None`` means there is
+        # none, and the hashing happens on this thread -- correct, and slow, and exactly
+        # what a single-process deployment wants.
+        self._to_auth = to_auth
         # Injected, for the same reason as the room sink above: the default keeps the
         # queue and the room ids in this process, and one built on a shared store keeps
         # them where every other shard can see them. The lobby cannot tell which it got.
@@ -224,19 +229,52 @@ class Lobby:
         # anything else is not something a client sends -- drop it
 
     def _on_login(self, client_id: int, username: str, password: str) -> None:
-        """Authenticate and, on success, move the client into the lobby.
+        """Get this password checked, somewhere that is not this thread if possible.
 
-        Login no longer seats anyone: it registers a first-seen username or verifies a
-        returning one, records the name and rating, and sends a :class:`Welcome` with no
-        colour ("you're in the lobby"). A seat comes later, from matchmaking. A bad
-        password is refused so the same connection can try again.
+        Checking one costs 36.5 ms of PBKDF2 — measured, not estimated — and doing it
+        here meant every game on this shard stopped for that long, once per person
+        arriving. It measured out at about twelve admissions a second and did not improve
+        by having fewer games.
+
+        So the password goes to the Auth service and this returns immediately; the answer
+        arrives later at :meth:`authenticated`. A lobby with no auth sink — one a test
+        drives directly, or any deployment without that service — does it inline exactly
+        as before, which is the same "default to doing it here" as the room sink above.
         """
-        rating = self._users.register_or_login(username, password)
+        if self._to_auth is None:
+            self.authenticated(
+                client_id, username, self._users.register_or_login(username, password)
+            )
+            return
+        self._to_auth(
+            subjects.AUTH_REQUEST,
+            envelope.encode(
+                envelope.AuthRequest(
+                    self._clients[client_id].address, username, password, self._shard_id
+                )
+            ),
+        )
+
+    def authenticated(
+        self, client_id: int, username: str, rating: Optional[int]
+    ) -> None:
+        """Apply the verdict on one login: into the lobby, back to a seat, or refused.
+
+        ``rating`` doubles as the verdict — a number means she proved who she is. This is
+        everything ``_on_login`` used to do after the hash, unchanged, and it is public
+        because the answer now arrives from another process.
+        """
+        client = self._clients.get(client_id)
+        if client is None:
+            # She closed the socket while her password was being checked. Thirty-six
+            # milliseconds is long enough for that to happen, and it did not use to be
+            # possible for anything to happen in the middle of a login at all.
+            _log.info("login for a client that has gone", extra={"client": client_id})
+            return
         if rating is None:
-            _log.info("client %d login refused for %r", client_id, username)
+            _log.info("login refused", extra={"client": client_id, "user": username})
             self._send(client_id, Rejected(RejectReason.BAD_PASSWORD))
             return
-        client = self._clients[client_id]
         client.username = username
         client.rating = rating
         _log.info("client %d logged in as %r (rating %d)", client_id, username, rating)

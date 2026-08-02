@@ -47,6 +47,16 @@ from __future__ import annotations
 # Where a connection nobody owns yet is announced. See the note above.
 LOBBY_CMD = "lobby.cmd"
 
+# Where a password is sent to be checked. Like LOBBY_CMD it is answered by "whoever is
+# free" rather than by name -- an Auth replica holds nothing between requests, so any of
+# them can answer any of them, which is the entire reason this work was moved off the
+# shard: the expensive part of logging in is now scaled by adding replicas.
+AUTH_REQUEST = "auth.request"
+
+# The queue group the Auth replicas share. Same contract as SHARD_GROUP below: spelled
+# differently by two replicas, they would each answer every login instead of sharing them.
+AUTH_GROUP = "auth"
+
 # The queue group every shard subscribes to LOBBY_CMD under. A group name is part of the
 # wire contract exactly as a subject is -- two shards that spelled it differently would
 # each get their own copy, which is the bug this exists to prevent -- so it lives here
@@ -83,6 +93,11 @@ def shard_start_game(shard_id: str) -> str:
     keeping the two apart means neither decoder has to ask which it is looking at.
     """
     return f"shard.{shard_id}.start_game"
+
+
+def shard_auth(shard_id: str) -> str:
+    """Where one shard is told who a connection of its own turned out to be."""
+    return f"shard.{shard_id}.auth"
 
 
 def shard_join_game(shard_id: str) -> str:

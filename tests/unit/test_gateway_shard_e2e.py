@@ -11,6 +11,7 @@ person, the gateway must follow the room once however many are in it, the watche
 what the players see, and the shard must still refuse a move from someone who has no seat.
 """
 
+from kfchess.auth.service import AuthService
 from kfchess.bus import subjects
 from kfchess.config import MS_PER_CELL, SHARD_HEARTBEAT_MS, START_RATING
 from kfchess.bus.envelope import decode_to_client
@@ -75,10 +76,12 @@ class Client:
 
 
 def a_world(gateway_id="gw1"):
-    """One bus, one gateway, one shard — the whole deployment, in one thread."""
+    """One bus, a gateway, a shard and an Auth — the whole deployment, in one thread."""
     bus = InProcessMessageBus()
     gateway = Gateway(bus, gateway_id)
-    shard = Shard(bus, a_board, UserStore(":memory:"))
+    users = UserStore(":memory:")
+    AuthService(bus, users)  # since S6 a login is somebody else's work
+    shard = Shard(bus, a_board, users)
     return bus, gateway, shard
 
 
@@ -133,8 +136,10 @@ def open_room_with_a_spectator():
     """A private room: white, black, and one watcher, all through the gateway."""
     bus = InProcessMessageBus()
     gateway = Gateway(bus, "gw1")
+    users = UserStore(":memory:")
+    AuthService(bus, users)
     # A known room id, so the joiners have something to type.
-    shard = Shard(bus, a_board, UserStore(":memory:"), SharedState.on(generate_id=lambda: "AAAAAA"))
+    shard = Shard(bus, a_board, users, SharedState.on(generate_id=lambda: "AAAAAA"))
 
     white = logged_in(gateway, "Efrat")
     white.send(CreateRoom())
@@ -210,7 +215,9 @@ def test_a_player_leaving_starts_a_countdown_the_spectator_also_sees():
 def test_a_second_gateway_serves_the_same_room_without_knowing_the_first():
     bus = InProcessMessageBus()
     here, there = Gateway(bus, "gw1"), Gateway(bus, "gw2")
-    shard = Shard(bus, a_board, UserStore(":memory:"), SharedState.on(generate_id=lambda: "AAAAAA"))
+    users = UserStore(":memory:")
+    AuthService(bus, users)
+    shard = Shard(bus, a_board, users, SharedState.on(generate_id=lambda: "AAAAAA"))
 
     white = logged_in(here, "Efrat")
     white.send(CreateRoom())
@@ -271,6 +278,7 @@ def two_shards():
     gateway = Gateway(bus, "gw1")
     users = UserStore(":memory:")
     store = InMemoryKeyValueStore()
+    AuthService(bus, users)
     first = Shard(bus, a_board, users, SharedState.on(store, "sh1"))
     second = Shard(bus, a_board, users, SharedState.on(store, "sh2"))
     return bus, gateway, first, second
@@ -401,6 +409,7 @@ def two_shards_with_a_room(id_generator=lambda: "AAAAAA"):
     gateway = Gateway(bus, "gw1")
     users = UserStore(":memory:")
     store = InMemoryKeyValueStore()
+    AuthService(bus, users)
     first = Shard(bus, a_board, users, SharedState.on(store, "sh1", generate_id=id_generator))
     second = Shard(bus, a_board, users, SharedState.on(store, "sh2", generate_id=id_generator))
     creator = logged_in(gateway, "Efrat")
@@ -504,6 +513,7 @@ def test_a_game_lost_with_its_shard_changes_nobody_rating():
     gateway = Gateway(bus, "gw1")
     users = UserStore(":memory:")
     store = InMemoryKeyValueStore()
+    AuthService(bus, users)
     Shard(bus, a_board, users, SharedState.on(store, "sh1"))
     Shard(bus, a_board, users, SharedState.on(store, "sh2"))
     white = sought(gateway, "Efrat")

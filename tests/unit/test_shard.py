@@ -5,6 +5,7 @@ piece of it that has a right and a wrong answer, so it lives at module level and
 tested with a fake hub instead of a running event loop.
 """
 
+from kfchess.auth.service import AuthService
 from kfchess.bus import subjects
 from kfchess.bus.envelope import ClientEvent, ClientEventKind, encode
 from kfchess.bus.message_bus import InProcessMessageBus
@@ -63,7 +64,9 @@ def a_shard():
         ])
 
     bus = InProcessMessageBus()
-    return bus, Shard(bus, board, UserStore(":memory:"))
+    users = UserStore(":memory:")
+    AuthService(bus, users)
+    return bus, Shard(bus, board, users)
 
 
 def report(bus, kind, conn_id, text=""):
@@ -115,7 +118,9 @@ def a_pooled_shard():
     store = InMemoryKeyValueStore()
     shared = SharedState.on(store, "sh1")
     bus = InProcessMessageBus()
-    return bus, Shard(bus, board, UserStore(":memory:"), shared), shared, store
+    users = UserStore(":memory:")
+    AuthService(bus, users)
+    return bus, Shard(bus, board, users, shared), shared, store
 
 
 def test_a_shard_is_in_the_pool_before_its_first_tick():
@@ -154,5 +159,24 @@ def test_releasing_a_connection_this_shard_never_held_is_harmless():
     bus, shard = a_shard()
 
     report(bus, ClientEventKind.RELEASED, "gw9.4")
+
+    assert shard.clients == 0
+
+
+def test_an_auth_answer_for_a_connection_that_has_gone_is_dropped():
+    """The other side of the same race, one layer out."""
+    from kfchess.bus.envelope import AuthResult
+    from kfchess.bus.envelope import encode as encode_envelope
+
+    bus, shard = a_shard()
+    report(bus, ClientEventKind.CONNECTED, "gw1.0")
+    report(bus, ClientEventKind.DISCONNECTED, "gw1.0")
+
+    from kfchess.config import SHARD_ID  # this shard answers to its own name
+
+    bus.publish(
+        subjects.shard_auth(SHARD_ID),
+        encode_envelope(AuthResult("gw1.0", "Efrat", 1200)),
+    )
 
     assert shard.clients == 0
