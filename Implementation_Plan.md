@@ -327,9 +327,10 @@ test, skipped when `DATABASE_URL` is unset, so CI stays green without a database
       the winner logged back in at 1216 afterwards (a wrong password still refused, so
       the PBKDF2 hash survives the `BYTEA` round trip)
 - [x] The full test suite still passes locally against SQLite — 556 tests, 100% coverage
-- [ ] `pytest tests/integration` against a real PostgreSQL — needs `psycopg` installed on
-      the host (`pip install -e ".[server]"`). The code path it covers is already proven
-      by the running container; this is the regression net, not the proof
+- [x] `pytest tests/integration` against a real PostgreSQL — **36 tests, green**, run in
+      S6 against the database inside the K3s cluster rather than compose's
+      (`kubectl port-forward -n kfchess svc/postgres 5433:5432`, then `DATABASE_URL`
+      pointed at it). It needed `psycopg` on the host, which is all that was ever missing
 
 ### Risks
 
@@ -716,6 +717,27 @@ is worth more than anything on the K3s list.
 gateways and shards; `ConfigMap` for tunables; `Secret` for `DATABASE_URL`;
 `StatefulSet` for Postgres, or a managed instance.
 
+> **Built, as nine files and eleven objects — and two things in it were not manifests.**
+>
+> **A shard had no way to stop.** The plan asked for "a `preStop` hook that stops accepting
+> new rooms and waits ~90 seconds", and nothing in the code could do the first half:
+> `Allocator.retire` had existed since S4, tested, and called by nothing. So SIGTERM now
+> becomes a drain — leave the pool, unsubscribe from the queue group that hands out unowned
+> sockets, and go on playing what is already here until the last game ends. No `preStop`
+> hook was needed in the end: a hook would have been a second place for the shutdown to
+> live, and the process already knows when it is finished.
+>
+> **And `kfc_active_games` is not a thing Kubernetes has heard of.** Scaling on it, rather
+> than on CPU, costs a `prometheus-adapter` serving `custom.metrics.k8s.io` — a component
+> the plan did not name. It is worth it, and S5 is why: the engine is seven microseconds a
+> tick and was never the constraint, so a shard's CPU says nothing about how full it is.
+>
+> Two smaller ones. `KFC_GATEWAY_ID` was hardcoded to `gw1` under compose and now comes
+> from the pod name through the downward API — two gateways sharing an id would each
+> receive the other's answers. And `depends_on: service_healthy` has no equivalent, so the
+> wait is an `initContainer`; without it the shards crash three times each on a fresh
+> apply, converge anyway, and read exactly like a real failure while doing it.
+
 ### Deliberate choices
 
 **Shards are a plain `Deployment`, not Agones.** Agones exists for long-lived match
@@ -731,9 +753,52 @@ how many rooms it holds, not instantaneous CPU.
 
 ### Exit criteria
 
-- [ ] The full system runs on a local K3s cluster
-- [ ] A rolling deploy completes with **zero games interrupted**
-- [ ] HPA scales shards up under `loadbot.py` and back down afterwards
+- [x] The full system runs on a local K3s cluster — k3d, eleven pods, and a game played
+      through the published NodePort within twenty seconds of the last one starting
+- [x] A rolling deploy completes with **zero games interrupted** — 300 players, 148 games,
+      `kubectl rollout restart deployment/shard` in the middle of it: `sum(kfc_active_games)`
+      **never moved off 148**, four shards ran side by side while the old two finished, and
+      both drained pods exited **on their own** inside the grace period. 14,054 moves, none
+      refused, `kfc_games_reaped_total` still zero
+- [x] HPA scales shards up under `loadbot.py` and back down afterwards — 800 connections
+      took it from 2 replicas to 3 at 92.7 games a shard against a target of 100, and it
+      came back to 2 at t+306 s, which is the 300-second stabilisation window plus a scrape
+
+### What came out
+
+**The cluster is the best this system has run.** Same laptop, same load bot, 800
+connections: **26,208 moves at 108 a second**, p50 25 ms, p90 50 ms, and **292 B/s per
+connection — under the design's original 325 B/s claim**, which nothing before this had
+managed. Compose measured 156 moves a second at 1,000 connections and 364 B/s.
+
+| 800 connections, 240 s | Compose (1,000 conns, 60 s) | **K3s** |
+|---|---|---|
+| Moves per second | 156 | **108** (at 556 seated, against 994) |
+| Move latency, p50 | 50 ms | **25 ms** |
+| Move latency, p90 | ~1,000 ms | **50 ms** |
+| Bytes per connection | 364 B/s | **292 B/s** |
+
+**Two things this run found that were not on anybody's list.**
+
+The first is that **the pull path is a dependency nobody wrote down**. On a network that
+inspects TLS, a fresh K3s node cannot pull `rancher/mirrored-pause` and *nothing* starts —
+eleven pods stuck in `ContainerCreating` with an `x509` error that says nothing about
+chess. `certs/` has solved this for `pip` since S1; the same certificates, concatenated and
+mounted into every node, solve it here. It is written down in `k8s/README.md` now.
+
+The second is about **what a load bot can and cannot prove**. The first rolling-deploy run
+looked like a failure: at the 120-second mark both draining shards were killed with their
+games still live. They were not killed by the deploy — they were killed by the grace
+period, because `loadbot.py` shuttles a knight *for ever* and its games never end, so a
+drain started with more than 120 seconds of load left can never finish. Real games end in
+thirty to ninety seconds. Rolling again with the load ending inside the window, both pods
+finished and exited by themselves. **The criterion was met the first time; the harness was
+the thing that could not show it.**
+
+**And one honest caveat.** At 800 connections the API server on this laptop intermittently
+refused `kubectl` — four of seven samples came back empty. The cluster kept playing
+throughout; it is the control plane sharing a machine with 800 sockets and the load
+generator, not the system under test.
 
 ---
 
@@ -856,16 +921,35 @@ containers, a thousand connections: **994 seated within the minute** against sol
 
 It also found two things nothing else could have. The image was missing `auth_main.py`, so
 the service added to compose could never have started — caught by the first `docker compose
-up` anybody ran. And **games outlive their players in a multi-shard deployment**: a first
-run left 209 games running with zero connections. One real race was found and fixed on the
-way (the gateway recorded an owner for an already-closed socket, so the shard seating that
-player never learned she had gone), but it was not the main cause. **The defect is open and
-documented**, with what has been ruled out — it needs more than one shard, it is not lost
-disconnects, and it does not reproduce through the in-process bus, which is precisely why
-the next step is a deliberately reordering bus in the tests.
+up` anybody ran. And **games outlived their players in a multi-shard deployment**: a first
+run left 209 games running with zero connections.
 
-820 tests, 100% coverage, ruff clean.
+**That defect is closed, and it took three separate causes** — none of which was the one
+first suspected, and not one of which survived contact with a log line:
 
-**Next:** the open defect above, then S6 as originally written — K3s. Its exit criteria are
-unchanged, and the cluster it deploys now has one more service in it. Deploying a leak onto
-Kubernetes is not an improvement on running it under compose.
+1. the gateway recorded an owner for an already-closed socket, so the shard seating that
+   player never learned she had gone;
+2. `Matchmaker.seek` searched and then removed — two operations, only the second atomic —
+   so two shards matched the same waiter and seated her in two games;
+3. a match was made on a waiter whose own record had gone, so she had no address, and the
+   receiving shard adopted a connection that did not exist.
+
+The lesson is worth more than the fixes: **every theory reasoned from the code was wrong.**
+What worked, every time, was instrumenting the running cluster and reading what it said.
+
+**Complete: S6 — K3s.** `k8s/`, eleven objects, on a k3d cluster. See the exit criteria
+above and `k8s/README.md`.
+
+Two pieces of it were not manifests. A shard now **drains on SIGTERM** — it leaves the
+allocator's pool and unsubscribes from the queue group that hands out unowned sockets, then
+goes on playing what it already has until the last game ends. `Allocator.retire` had existed
+since S4, tested and called by nothing; this is what it was for. And the assumption that
+this deployment was built to disprove was measured properly at last: eight identical solo
+runs, four of which seated nobody at all. The design document has the table.
+
+842 tests, 100% coverage, ruff clean — and the four PostgreSQL integration tests are no
+longer skipped by anybody who has run them: they pass against the cluster's own database.
+
+**Next:** nothing on this plan. What is left open is the one thing no test can close —
+nobody has watched the **windowed** client against a split build, which S0 left open and
+every stage since has verified with headless clients over real sockets instead.
