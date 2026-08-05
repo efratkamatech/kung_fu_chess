@@ -594,6 +594,17 @@ class Lobby:
         """
         game = self._games[game_id]
         client = self._clients[client_id]
+        if client.session_id is not None:
+            # She is already in a game, and nothing legitimate asks for this. Seating her
+            # again would leave her a member of the first game with no way ever to leave
+            # it, since a departure only removes her from the one her seat records --
+            # which is exactly how a matchmaking race once stranded games for good.
+            # Refusing is not a fix for such a race; it is the floor under the next one.
+            _log.warning(
+                "refused to seat a player who is already seated",
+                extra={"client": client_id, "seated_in": client.session_id, "asked": game_id},
+            )
+            return
         color = game.session.assign_color()  # WHITE, then BLACK, then None (spectator)
         self._join(client_id, game_id)
         client.color = color

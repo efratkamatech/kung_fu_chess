@@ -20,6 +20,13 @@ the queue — the linear scan this replaced, moved onto the network. Asking for 
 *above* and the nearest *below* is two queries, each O(log n), and the closest of those
 two is the closest overall.
 
+**Finding a partner is not claiming her.** Two shards searching at the same instant see
+the same waiting player, and only one may have her — so the *removal* decides, because it
+is the only one of the two steps that is atomic. A seeker whose claim loses simply looks
+again. This was a real bug, found by running two shards under load: the same player was
+matched twice, seated in two games, and could only ever leave one of them, so the other
+was held open by a member who would never depart.
+
 **Nobody sweeps the queue for expired waiters.** Counting down every waiter's clock on a
 timer is O(everyone waiting), twenty times a second, which was the more expensive half of
 the old implementation. Instead a waiter who has been there too long is dropped by
@@ -133,13 +140,20 @@ class Matchmaker:
         partner is taken out of the queue, and plays white for having arrived first — or
         ``None``, in which case she is now waiting, at the address given.
         """
-        partner = self._closest_waiting(username, rating)
-        if partner is not None:
+        while True:
+            partner = self._closest_waiting(username, rating)
+            if partner is None:
+                break
             # The ranking is indexed by rating and carries only what a search needs to
             # compare. Her address lives in her own record, and is worth exactly one more
             # lookup — once, on the seek that actually matches, not on every candidate.
             addressed = self._waiting(partner.username) or partner
-            self._remove(partner)
+            if not self._remove(partner):
+                # Somebody else claimed her between the search and the claim. Finding her
+                # was never the decision — removing her is, because that is the only step
+                # of the two that is atomic. Two shards that both matched the same waiter
+                # would seat her in two games, and she can only ever leave one of them.
+                continue
             return Match(
                 partner.username,
                 username,
@@ -243,9 +257,15 @@ class Matchmaker:
             ttl_s=_SEEKER_TTL_FACTOR * self._timeout_ms // 1000,
         )
 
-    def _remove(self, waiter: Waiter) -> None:
-        self._store.remove_from_ranking(QUEUE, waiter.member)
+    def _remove(self, waiter: Waiter) -> bool:
+        """Take a waiter out of the queue; answer whether this caller is the one who did.
+
+        The ranking is the authority: her own record is a convenience for looking her up
+        by name, and deleting it twice harms nothing.
+        """
+        claimed = self._store.remove_from_ranking(QUEUE, waiter.member)
         self._store.delete(_seeker_key(waiter.username))
+        return claimed
 
     def _waiting(self, username: str) -> Optional[Waiter]:
         stored = self._store.get(_seeker_key(username))

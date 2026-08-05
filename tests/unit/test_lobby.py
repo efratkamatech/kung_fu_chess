@@ -890,3 +890,20 @@ def test_an_answer_for_a_client_who_left_during_the_check_is_dropped():
     hub.authenticated(client_id, "Efrat", START_RATING)
 
     assert client.received == []
+
+
+def test_a_player_already_in_a_game_is_not_seated_into_a_second_one():
+    """The floor under a race, not a fix for one.
+
+    A departure removes her only from the game her seat records, so a player in two games
+    leaves one of them for ever — and a game with a member who never leaves is a game
+    nothing ever discards. A matchmaking race did exactly this in a two-shard deployment.
+    """
+    hub, white, black, wid, bid = seat_two()
+    first_game = of_type(white, State)[-1].snapshot
+
+    hub.start_game((wid, "Efrat", START_RATING), (bid, "Dan", START_RATING))
+
+    # No second seat, and the game she is in is the one she was already in.
+    assert len(of_type(white, Seated)) == 1
+    assert of_type(white, State)[-1].snapshot.room_id == first_game.room_id

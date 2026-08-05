@@ -478,7 +478,7 @@ That is not a result about Auth. It is an argument for the whole shape of this d
 suffers is not a property you can reason about from the code. Putting the two on separate
 processes is what makes either of them predictable.
 
-#### The games that outlive their players — an open defect
+#### The games that outlived their players — found, and mostly fixed
 
 The first load test against the real cluster left **209 games running with zero
 connections**, and they never went away. What is known:
@@ -501,10 +501,40 @@ it, because every unattended release path in this system is a TTL on a *key*, an
 an object in a shard's memory. That asymmetry is itself worth noting — it is the one
 resource here without the second release path the rest of the design is careful to give.
 
-Two candidate fixes, in order of honesty: find the interleaving with a deliberately
-**reordering message bus** in the tests, which is the tool this defect is asking for; and
-independently give a game the unattended release path every other resource has, so that
-this class of bug cannot strand memory whatever causes it.
+**The cause, found by instrumenting the running cluster rather than by reasoning.** A log
+line on the branch where a game is *kept* said `members: [30], known: []` — a member the
+lobby no longer had a client for. A second line said why: `client 23, session: 9,
+member_of: [7, 9]`. **The same player was seated in two games at once.** A departure only
+removes her from the game her seat records, so the other one kept a member who could never
+leave, and nothing ever discarded it.
+
+And the reason she was in two games is a race in the matchmaker:
+
+```python
+partner = self._closest_waiting(...)   # two shards can both find her
+self._remove(partner)                  # ...and both then take her
+```
+
+Finding a waiter and claiming her were **two operations**, and only the second is atomic.
+Two shards seeking in the same instant both matched the same waiting player and both
+started a game with her in it. This is exactly the race the rooms service was written to
+avoid — `SET NX` is there because "look, then write" is not safe between processes — and
+the queue simply did not have the same care taken over it.
+
+**The fix is the same shape as the rooms one: let the atomic step decide.**
+`remove_from_ranking` now answers *whether it was this caller who removed it* — Redis
+`ZREM` returns the count, so the answer was always available — and a seeker whose claim
+loses looks for somebody else instead of walking away with a player she does not have.
+
+**Measured on the cluster that produced it:** three rounds of twenty games, leaking 5, 4
+and 3 before; **1 in total afterwards, and not growing.** A guard was added alongside —
+seating a player who is already seated is refused and logged — so that this *class* of bug
+cannot strand memory again even from a cause nobody has found yet. It has not fired once.
+
+**Still open, and much smaller:** roughly one game in sixty survives its players. It is not
+the double-seat path, because that guard never fires. A game remains the one resource in
+this system with no unattended release path — every other one is a key with a TTL — and
+giving it one is the obvious floor under whatever is left.
 
 **Why multiple regions?** 10 million players "from all over the world" cannot sit on one
 continent anyway. `MS_PER_CELL = 1000` — a piece crosses a square in one second. A 300 ms

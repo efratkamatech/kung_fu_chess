@@ -255,3 +255,92 @@ def test_the_closest_partner_wins_across_shards_too():
     now[0] += 1
 
     assert shards[2].seek("Dan", 1200) == Match("Near", "Dan", 1150, 1200)
+
+
+# --- claiming, which is not the same as finding ---------------------------------
+
+def test_removing_a_waiter_says_whether_it_was_this_caller_who_removed_her():
+    """The answer that makes claiming safe: only one remover can be told 'yes'."""
+    matchmaker, store, _ = a_matchmaker()
+    matchmaker.seek("Efrat", 1200)
+    member = Waiter("Efrat", 1200, 1_000_000).member
+
+    assert store.remove_from_ranking(QUEUE, member) is True
+    assert store.remove_from_ranking(QUEUE, member) is False
+
+
+def test_a_waiter_claimed_by_somebody_else_is_not_matched_again():
+    """The bug this exists to stop, found by running two shards under load.
+
+    Two shards search at the same instant and both see the same waiting player. Both used
+    to return her as a match, so she was seated in two games at once — and a player can
+    only ever leave one of them, so the other stayed open for ever, held by a member who
+    would never depart. Finding her is not claiming her; the removal decides.
+    """
+    _, store, now = a_matchmaker()
+    here = Matchmaker(store, now_ms=lambda: now[0])
+    there = Matchmaker(store, now_ms=lambda: now[0])
+    here.seek("Efrat", 1200)  # the only person waiting
+
+    # `there` finds her and claims her; `here` finds her a moment later and does not.
+    stolen = there.seek("Dan", 1200)
+    missed = here.seek("Noa", 1200)
+
+    assert stolen == Match("Efrat", "Dan", 1200, 1200)
+    assert missed is None          # nobody left to pair with...
+    assert here.is_waiting("Noa")  # ...so she waits, rather than being handed a ghost
+
+
+class LosesTheFirstClaim:
+    """A store where the first removal loses the race, as Redis reports when it does.
+
+    The real interleaving cannot be produced in one thread: the member has to still be
+    there when the search reads it and gone when the claim tries to take it, which is a
+    thing two processes do to each other. This is that moment, held still.
+    """
+
+    def __init__(self, store):
+        self._store = store
+        self._lost = False
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def remove_from_ranking(self, key, member):
+        if not self._lost:
+            self._lost = True
+            self._store.remove_from_ranking(key, member)  # somebody else took her
+            return False
+        return self._store.remove_from_ranking(key, member)
+
+
+def test_a_seeker_who_loses_a_claim_takes_the_next_waiter_instead():
+    """The retry, exercised at the exact instant the race is lost."""
+    _, store, now = a_matchmaker()
+    seeded = Matchmaker(store, now_ms=lambda: now[0])
+    seeded.seek("Taken", 1210)
+    now[0] += 1
+    seeded.seek("Free", 1390)
+
+    racing = Matchmaker(LosesTheFirstClaim(store), now_ms=lambda: now[0])
+
+    assert racing.seek("Dan", 1300) == Match("Free", "Dan", 1390, 1300)
+
+
+def test_a_lost_claim_looks_again_rather_than_giving_up():
+    """There may be somebody else waiting, and the seeker is owed a game.
+
+    The two waiters are 180 apart so neither pairs with the other, and Dan sits 90 from
+    each — a tie the longest wait breaks in favour of the one that is about to be stolen.
+    """
+    _, store, now = a_matchmaker()
+    here = Matchmaker(store, now_ms=lambda: now[0])
+    here.seek("Taken", 1210)
+    joined = now[0]
+    now[0] += 1
+    here.seek("Free", 1390)
+
+    # Another shard claims "Taken" between this seeker's search and its claim.
+    store.remove_from_ranking(QUEUE, Waiter("Taken", 1210, joined).member)
+
+    assert here.seek("Dan", 1300) == Match("Free", "Dan", 1390, 1300)

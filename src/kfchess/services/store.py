@@ -58,8 +58,14 @@ class KeyValueStore(Protocol):
     def add_to_ranking(self, key: str, member: str, score: float) -> None:
         """Put ``member`` in the ranking at ``key`` with ``score``."""
 
-    def remove_from_ranking(self, key: str, member: str) -> None:
-        """Take ``member`` out of a ranking; one that is not there is not an error."""
+    def remove_from_ranking(self, key: str, member: str) -> bool:
+        """Take ``member`` out of a ranking; answer whether it was there to take.
+
+        The answer is the point, not a courtesy. Two processes that both *found* a member
+        will both try to take it, and only one of them may have it — so the removal is
+        what decides, because it is the only step that is atomic. ``False`` means
+        somebody else got there first.
+        """
 
     def first_in_range(
         self, key: str, low: float, high: float, reverse: bool = False
@@ -127,9 +133,9 @@ class InMemoryKeyValueStore:
         """Put ``member`` in the ranking at ``key`` with ``score`` (Redis ``ZADD``)."""
         self._rankings.setdefault(key, {})[member] = score
 
-    def remove_from_ranking(self, key: str, member: str) -> None:
-        """Take ``member`` out of a ranking; one that is not there is not an error."""
-        self._rankings.get(key, {}).pop(member, None)
+    def remove_from_ranking(self, key: str, member: str) -> bool:
+        """Take ``member`` out of a ranking; answer whether it was there to take."""
+        return self._rankings.get(key, {}).pop(member, None) is not None
 
     def first_in_range(
         self, key: str, low: float, high: float, reverse: bool = False
@@ -191,8 +197,10 @@ class RedisKeyValueStore:  # pragma: no cover  (a live Redis; the in-memory one 
     def add_to_ranking(self, key: str, member: str, score: float) -> None:
         self._client.zadd(key, {member: score})
 
-    def remove_from_ranking(self, key: str, member: str) -> None:
-        self._client.zrem(key, member)
+    def remove_from_ranking(self, key: str, member: str) -> bool:
+        # ZREM answers how many it removed, and that answer is what makes claiming a
+        # waiter safe between shards.
+        return bool(self._client.zrem(key, member))
 
     def first_in_range(
         self, key: str, low: float, high: float, reverse: bool = False
