@@ -66,6 +66,9 @@ class Shard:
         # shard which has only just started can be given a game before its first tick.
         self._since_heartbeat_ms = 0
         self._allocator.announce(self._shard_id, 0)
+        # Set once, by :meth:`drain`, and never unset: a shard that has been told to stop
+        # is not a shard that can be talked back into service.
+        self._draining = False
         self._hub = Lobby(
             new_board,
             users,
@@ -273,7 +276,49 @@ class Shard:
         self._since_heartbeat_ms += dt_ms
         if self._since_heartbeat_ms >= SHARD_HEARTBEAT_MS:
             self._since_heartbeat_ms = 0
-            self._allocator.announce(self._shard_id, self._hub.game_count)
+            # A draining shard says nothing. The heartbeat is what would otherwise put it
+            # straight back into the pool it has just left, five seconds after leaving.
+            if not self._draining:
+                self._allocator.announce(self._shard_id, self._hub.game_count)
+
+    # --- stopping ---------------------------------------------------------------
+
+    def drain(self) -> None:
+        """Stop taking on anything new, and go on playing what is already here.
+
+        This is what a rolling deploy needs and what killing a pod does not give it. Two
+        things stop, and they are two because they are two different ways to acquire work:
+
+        - the **pool**, so nothing allocates a new game here. ``retire`` shortens the
+          window to nothing; the TTL alone would leave up to fifteen seconds in which a
+          game could still be placed on a shard that is going away.
+        - the **queue group**, so no unowned connection is claimed here. Every other
+          shard is subscribed to the same subject, so the sockets simply go to them —
+          nothing is dropped and nobody has to be told.
+
+        What is deliberately *not* stopped is everything belonging to the games already
+        running: their subjects, their players' messages, and the tick that advances them.
+        A game in progress is the one thing a deploy must not cost anybody, and it ends by
+        being finished rather than by being cut off.
+
+        Calling it twice is calling it once. A SIGTERM can be followed by another one, and
+        the second must not un-retire anything or unsubscribe a subscription that has gone.
+        """
+        if self._draining:
+            return
+        self._draining = True
+        self._bus.unsubscribe(subjects.LOBBY_CMD)
+        self._allocator.retire(self._shard_id)
+        _log.info("draining", extra={"games": self._hub.game_count})
+
+    @property
+    def finished(self) -> bool:
+        """Whether this shard is draining and has no game left to finish.
+
+        The exit condition, and the reason a shutdown is bounded by the games rather than
+        by a timer: the orchestrator's grace period is the ceiling, not the schedule.
+        """
+        return self._draining and self._hub.game_count == 0
 
     def next_event_delay_ms(self) -> Optional[int]:
         """When this shard next has something to do — see :func:`next_sleep_s`."""
@@ -307,11 +352,15 @@ def next_sleep_s(shard, ceiling_ms: int) -> float:
 
 
 async def run_games(shard: Shard, tick_ms: int = None) -> None:  # pragma: no cover
-    """Advance ``shard``'s games for ever, waking only when one of them needs it.
+    """Advance ``shard``'s games until there are none left to advance.
 
     The clock, and nothing else. Both deployments run this exact loop — a shard on the
     far end of NATS, and the solo server in the same process as its own sockets — so
     time passes the same way in a game played on a laptop and one played on a cluster.
+
+    It returns only after a :meth:`Shard.drain`, and only once the last game has ended;
+    an ordinary shard is never finished, so this is a loop for ever until somebody asks
+    it to stop.
     """
     import asyncio
     import time
@@ -322,7 +371,7 @@ async def run_games(shard: Shard, tick_ms: int = None) -> None:  # pragma: no co
     # Measured elapsed time, not the interval we asked to sleep for: a loop that advances
     # by a constant falls further behind the wall clock the busier it gets.
     last = time.monotonic()
-    while True:
+    while not shard.finished:
         await asyncio.sleep(next_sleep_s(shard, tick_ms))
         now = time.monotonic()
         shard.tick(round((now - last) * 1000))
@@ -343,8 +392,16 @@ async def serve(  # pragma: no cover  (irreducible async NATS + timer I/O)
     This is the deployment where the shared state has to be genuinely shared, so it opens
     a Redis. The solo server builds the same :class:`~kfchess.services.shared.SharedState`
     over a dictionary and runs the same lobby against it.
+
+    **It stops on its own terms.** An orchestrator asks a process to go away by sending it
+    SIGTERM and then waiting; the default answer is to die on the spot, which for this
+    process means every game it was running ends mid-move. So the signal is caught and
+    turned into a :meth:`Shard.drain` — leave the pool, stop claiming sockets, finish the
+    games — and this returns when the last one has ended. What bounds it is the
+    orchestrator's grace period, which is set longer than the longest game.
     """
     import asyncio
+    import signal
 
     from kfchess.bus.message_bus import connect
     from kfchess.config import NATS_URL, OBS_PORT, REDIS_URL, SHARD_ID
@@ -357,4 +414,14 @@ async def serve(  # pragma: no cover  (irreducible async NATS + timer I/O)
     shared = SharedState.on(connect_store(REDIS_URL), SHARD_ID)
     shard = Shard(bus, new_board, UserStore(), shared)
 
-    await asyncio.gather(bus.run(), run_games(shard, tick_ms))
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGTERM, shard.drain)
+    except NotImplementedError:
+        # Windows has no signal handlers on the event loop. The containers this is
+        # written for are Linux, and a laptop run is ended with Ctrl-C anyway.
+        _log.info("no SIGTERM handler on this platform; shutdown will not drain")
+
+    pump = asyncio.create_task(bus.run())
+    await run_games(shard, tick_ms)  # returns only after a drain, once the games are done
+    pump.cancel()

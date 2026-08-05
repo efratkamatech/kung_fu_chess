@@ -193,3 +193,95 @@ def test_a_shard_publishes_how_many_connections_it_believes_it_holds():
     shard.tick(1)
 
     assert CLIENTS.value == 2
+
+
+# --- draining, so a deploy costs nobody a game ---------------------------------
+
+def seat_a_game(bus):
+    """Two players, logged in and matched: one game, running."""
+    for number, name in enumerate(("Efrat", "Dan")):
+        report(bus, ClientEventKind.CONNECTED, f"gw1.{number}")
+        report(bus, ClientEventKind.MESSAGE, f"gw1.{number}", encode_wire(Login(name, "pw")))
+        report(bus, ClientEventKind.MESSAGE, f"gw1.{number}", encode_wire(Play()))
+
+
+def test_a_draining_shard_leaves_the_pool_at_once():
+    """Not in fifteen seconds, when the TTL runs out -- now, before the next allocation."""
+    _, shard, shared, _ = a_pooled_shard()
+
+    shard.drain()
+
+    assert shared.allocator.allocate() is None
+
+
+def test_the_heartbeat_does_not_put_a_draining_shard_back_in_the_pool():
+    """The announcement is the one thing that would undo a drain, five seconds later."""
+    _, shard, shared, _ = a_pooled_shard()
+    shard.drain()
+
+    shard.tick(SHARD_HEARTBEAT_MS)
+
+    assert shared.allocator.allocate() is None
+
+
+def test_a_draining_shard_stops_claiming_unowned_connections():
+    """A socket announced to every shard at once must go to one that is staying."""
+    bus, shard, _, _ = a_pooled_shard()
+
+    shard.drain()
+    report(bus, ClientEventKind.CONNECTED, "gw1.7")
+
+    assert shard.clients == 0
+
+
+def test_a_draining_shard_still_serves_the_players_it_already_has():
+    """The whole point: a game in progress is finished, not cut off.
+
+    Her move arrives on this shard's own subject rather than the shared one, which is
+    where a seated player's messages have come from since she was claimed — and is
+    exactly why unsubscribing from the shared subject costs her nothing.
+    """
+    bus, shard, _, _ = a_pooled_shard()
+    seat_a_game(bus)
+
+    shard.drain()
+    bus.publish(
+        subjects.shard_cmd("sh1"),
+        encode(ClientEvent(ClientEventKind.MESSAGE, "gw1.0", encode_wire(Move("WRa1a3")))),
+    )
+
+    assert shard.next_event_delay_ms() == 2 * MS_PER_CELL  # the move is in flight
+
+
+def test_a_shard_is_not_finished_while_a_game_is_running():
+    bus, shard, _, _ = a_pooled_shard()
+    seat_a_game(bus)
+
+    shard.drain()
+
+    assert shard.finished is False
+
+
+def test_a_drained_shard_with_no_games_left_is_finished():
+    _, shard, _, _ = a_pooled_shard()
+
+    shard.drain()
+
+    assert shard.finished is True
+
+
+def test_a_shard_that_was_never_asked_to_stop_is_never_finished():
+    """An idle shard has no games either, and must not mistake that for permission to go."""
+    _, shard, _, _ = a_pooled_shard()
+
+    assert shard.finished is False
+
+
+def test_draining_twice_is_draining_once():
+    """A second SIGTERM must not unsubscribe a subscription that has already gone."""
+    _, shard, shared, _ = a_pooled_shard()
+    shard.drain()
+
+    shard.drain()  # must not raise
+
+    assert shared.allocator.allocate() is None
