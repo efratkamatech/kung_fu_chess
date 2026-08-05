@@ -188,6 +188,9 @@ class Shard:
         if client_id is not None:
             self._hub.disconnect(client_id)
             _log.info("connection %s gone", conn_id)
+        else:
+            # TEMPORARY DIAGNOSTIC: a departure for somebody this shard never held.
+            _log.warning("departure for a stranger", extra={"conn": conn_id})
 
     # --- what the shard answers -----------------------------------------------
 

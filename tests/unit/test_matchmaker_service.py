@@ -344,3 +344,46 @@ def test_a_lost_claim_looks_again_rather_than_giving_up():
     store.remove_from_ranking(QUEUE, Waiter("Taken", 1210, joined).member)
 
     assert here.seek("Dan", 1300) == Match("Free", "Dan", 1390, 1300)
+
+
+def test_a_waiter_whose_record_is_gone_is_not_matched():
+    """A pairing nobody can deliver is worse than no pairing at all.
+
+    The ranking says who is waiting and at what rating; her own record is the only place
+    her *address* is written down. Losing it and matching her anyway hands the receiving
+    shard a connection id of ``""`` — it adopts a socket that does not exist, seats her
+    in a game, and nothing can ever close it, because nothing will ever report the
+    departure of a connection nobody has.
+    """
+    matchmaker, store, now = a_matchmaker()
+    matchmaker.seek("Ghost", 1200, "gw1.7", "sh1")
+    store.delete("mm:seeker:Ghost")  # her record, gone; the ranking still lists her
+
+    assert matchmaker.seek("Dan", 1200) is None
+    assert not matchmaker.is_waiting("Ghost")   # the stale entry is gone...
+    assert matchmaker.is_waiting("Dan")         # ...and Dan waits, rather than being lost
+    assert store.first_in_range(QUEUE, 0, 9999)[0].endswith("Dan")
+
+
+def test_a_reachable_waiter_behind_an_unreachable_one_is_still_matched():
+    """Dropping the unaddressable one is a skip, not a surrender."""
+    matchmaker, store, now = a_matchmaker()
+    matchmaker.seek("Ghost", 1210, "", "")
+    store.delete("mm:seeker:Ghost")
+    now[0] += 1
+    matchmaker.seek("Real", 1390, "gw1.9", "sh2")
+
+    match = matchmaker.seek("Dan", 1300)
+
+    assert match == Match("Real", "Dan", 1390, 1300, "gw1.9", "sh2")
+
+
+def test_a_matched_partner_always_comes_with_an_address():
+    """The property the two tests above are really defending."""
+    matchmaker, _, _ = a_matchmaker()
+    matchmaker.seek("Efrat", 1200, "gw1.3", "sh1")
+
+    match = matchmaker.seek("Dan", 1200, "gw1.4", "sh1")
+
+    assert match.white_conn_id == "gw1.3"
+    assert match.white_shard_id == "sh1"

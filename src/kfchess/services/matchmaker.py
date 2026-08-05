@@ -44,6 +44,7 @@ measurement says the key is hot, not before.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -58,6 +59,9 @@ _JOINED_DIGITS = 13  # milliseconds since the epoch, to the year 2286
 _SEPARATOR = ":"
 # How much longer a seeker's own record lives than her patience — see :meth:`_add`.
 _SEEKER_TTL_FACTOR = 2
+
+
+_log = logging.getLogger(__name__)  # silent until configure_logging runs
 
 
 def wall_clock_ms() -> int:
@@ -147,7 +151,16 @@ class Matchmaker:
             # The ranking is indexed by rating and carries only what a search needs to
             # compare. Her address lives in her own record, and is worth exactly one more
             # lookup — once, on the seek that actually matches, not on every candidate.
-            addressed = self._waiting(partner.username) or partner
+            addressed = self._waiting(partner.username)
+            if addressed is None:
+                # The ranking still lists her, but her own record — the only place her
+                # address is written down — has gone. She cannot be reached, so she
+                # cannot be matched: a pairing nobody can deliver is worse than none,
+                # because the shard that received it would adopt a connection that does
+                # not exist and hold it for ever. Take the stale entry out and look again.
+                _log.info("dropping a waiter with no address", extra={"user": partner.username})
+                self._remove(partner)
+                continue
             if not self._remove(partner):
                 # Somebody else claimed her between the search and the claim. Finding her
                 # was never the decision — removing her is, because that is the only step

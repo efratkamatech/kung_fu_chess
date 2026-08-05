@@ -478,7 +478,7 @@ That is not a result about Auth. It is an argument for the whole shape of this d
 suffers is not a property you can reason about from the code. Putting the two on separate
 processes is what makes either of them predictable.
 
-#### The games that outlived their players — found, and mostly fixed
+#### The games that outlived their players — found, and fixed
 
 The first load test against the real cluster left **209 games running with zero
 connections**, and they never went away. What is known:
@@ -553,11 +553,34 @@ by exactly one shard*, so the two sums are equal:
 shard clients = 2   vs   gateway sockets = 0
 ```
 
-One stranded client per stranded game. **The disconnect was published and went to the wrong
-shard**: the gateway addresses it to the owner it has recorded, and ownership moves during a
-handover, so a stale owner drops a departure that the real owner never hears. That is a
-much narrower defect than "games leak", it is now visible in one Prometheus query rather
-than by counting containers, and it is the next thing to fix.
+One stranded client per stranded game — and the invariant is what made the last step
+possible, because it turned "sometimes a game survives" into "exactly this many
+connections are believed in that nobody has".
+
+**The answer was not a lost disconnect at all.** Every departure was delivered to a shard
+that held the client; the counters said so. What the logs turned up instead was a
+connection id of `""`. A player was being matched, handed to a shard, and seated — with no
+address. The shard adopted a socket that does not exist, and nothing could ever report its
+departure, because nobody had it.
+
+She had no address because **the queue's two records had come apart**. The ranking says who
+is waiting and at what rating; her own record is the only place her connection is written
+down. When the second is gone and the first is not, a search still finds her — and a match
+made on that is a match nobody can deliver.
+
+```python
+addressed = self._waiting(partner.username)
+if addressed is None:
+    self._remove(partner)   # take the stale entry out
+    continue                # and look for somebody we can actually reach
+```
+
+A pairing that cannot be delivered is worse than no pairing, because the damage outlives
+the players: the game it creates has a member who can never leave.
+
+**Six consecutive runs of twenty games afterwards: nothing leaked, nothing stranded,
+nothing reaped.** The guard fired twenty times over those runs — twenty matches that would
+each have become a phantom.
 
 **Why multiple regions?** 10 million players "from all over the world" cannot sit on one
 continent anyway. `MS_PER_CELL = 1000` — a piece crosses a square in one second. A 300 ms
