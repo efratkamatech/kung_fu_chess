@@ -1,0 +1,35 @@
+# Where the shared services are, and how to get into the database.
+#
+# The split between the two is the point, not bookkeeping: a ConfigMap is readable by
+# anyone who can read the namespace, and a Secret is the thing you would rotate. Only one
+# value here is a credential, so only one is a Secret -- S1 said this would happen and
+# this is it happening.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kfchess-env
+  namespace: kfchess
+data:
+  # Service names, not addresses. Kubernetes resolves each to the one Service in front of
+  # however many pods are behind it, which is the same promise compose's DNS made.
+  NATS_URL: nats://nats:4222
+  REDIS_URL: redis://redis:6379/0
+  # Seven services being searched at once want fields, not sentences.
+  KFC_LOG_JSON: "1"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kfchess-db
+  namespace: kfchess
+type: Opaque
+stringData:
+  # Development credentials, and deliberately in the file for the same reason
+  # docker-compose.yml carries them: a fresh clone has to come up with one command, and
+  # nothing outside the cluster can reach this database. A real environment replaces this
+  # object -- everything above it reads a Secret either way, which is the part that had to
+  # be true before there was anything to protect.
+  DATABASE_URL: postgresql://kfchess:kfchess@postgres:5432/kfchess
+  POSTGRES_USER: kfchess
+  POSTGRES_PASSWORD: kfchess
+  POSTGRES_DB: kfchess

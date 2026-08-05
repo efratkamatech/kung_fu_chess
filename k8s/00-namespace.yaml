@@ -1,0 +1,6 @@
+# One namespace for the whole system, so `kubectl delete namespace kfchess` is a complete
+# uninstall and no manifest below has to name a namespace of its own.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kfchess

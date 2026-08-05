@@ -1,0 +1,199 @@
+# The translator between what this system measures and what an autoscaler can read.
+#
+# Kubernetes will not scale on `kfc_active_games` because it has never heard of it. It
+# knows one API -- custom.metrics.k8s.io -- and something has to serve it. That is all
+# this is: prometheus-adapter, registered as the provider of that API, told which series
+# to expose and how to associate each one with the pod it came from.
+#
+# It is here because the plan chose games over CPU, and that choice is worth the extra
+# component: CPU is a proxy for the thing that saturates a shard, and games are the thing
+# itself. A shard holding four hundred rooms at ten percent CPU is full; a shard hashing
+# passwords at ninety percent is not a shard that needs a sibling, it is a shard that
+# needed Auth split out -- which is exactly the mistake this project already made once.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metrics-adapter
+  namespace: kfchess
+---
+# Permission to read the metrics it will serve, and to be trusted by the API server.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kfchess-metrics-adapter
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, namespaces, configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: ["metrics.k8s.io", "custom.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kfchess-metrics-adapter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kfchess-metrics-adapter
+subjects:
+  - kind: ServiceAccount
+    name: metrics-adapter
+    namespace: kfchess
+---
+# An extension API server has to be allowed to check who is calling it, and to read the
+# config map that says how the cluster authenticates. These two bindings are boilerplate
+# for every aggregated API and mean nothing beyond "this is a real API server".
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kfchess-metrics-adapter:system:auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: metrics-adapter
+    namespace: kfchess
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kfchess-metrics-adapter-auth-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+  - kind: ServiceAccount
+    name: metrics-adapter
+    namespace: kfchess
+---
+# And the HPA controller's own permission to ask for these metrics at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kfchess-custom-metrics-reader
+rules:
+  - apiGroups: ["custom.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kfchess-custom-metrics-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kfchess-custom-metrics-reader
+subjects:
+  - kind: ServiceAccount
+    name: horizontal-pod-autoscaler
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metrics-adapter-config
+  namespace: kfchess
+data:
+  config.yaml: |
+    rules:
+      # Two gauges, and only two. Everything else this system publishes is for a person
+      # reading a graph; these are the two an autoscaler is allowed to act on.
+      - seriesQuery: 'kfc_active_games{namespace!="",pod!=""}'
+        resources:
+          overrides:
+            namespace: {resource: namespace}
+            pod: {resource: pod}
+        name:
+          as: kfc_active_games
+        # No rate, no window: it is a gauge and the current value is the question.
+        metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+      - seriesQuery: 'kfc_connections{namespace!="",pod!=""}'
+        resources:
+          overrides:
+            namespace: {resource: namespace}
+            pod: {resource: pod}
+        name:
+          as: kfc_connections
+        metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-adapter
+  namespace: kfchess
+spec:
+  selector:
+    app: metrics-adapter
+  ports:
+    - port: 443
+      targetPort: https
+      name: https
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-adapter
+  namespace: kfchess
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-adapter
+  template:
+    metadata:
+      labels:
+        app: metrics-adapter
+    spec:
+      serviceAccountName: metrics-adapter
+      containers:
+        - name: adapter
+          image: registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0
+          args:
+            - --prometheus-url=http://prometheus.kfchess.svc:9090
+            - --config=/etc/adapter/config.yaml
+            - --metrics-relist-interval=10s
+            # A self-signed certificate, generated at startup. This API is reachable only
+            # from the API server inside the cluster, and a certificate authority for it
+            # would be a second thing to operate for a local cluster that is torn down
+            # after every run.
+            - --secure-port=6443
+            - --cert-dir=/tmp/cert
+          ports:
+            - containerPort: 6443
+              name: https
+          volumeMounts:
+            - name: config
+              mountPath: /etc/adapter
+              readOnly: true
+            - name: cert
+              mountPath: /tmp/cert
+      volumes:
+        - name: config
+          configMap:
+            name: metrics-adapter-config
+        - name: cert
+          emptyDir: {}
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+spec:
+  service:
+    name: metrics-adapter
+    namespace: kfchess
+    port: 443
+  group: custom.metrics.k8s.io
+  version: v1beta1
+  # The certificate is self-signed and generated on start, so there is no authority for
+  # the API server to check it against.
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100

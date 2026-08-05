@@ -1,0 +1,83 @@
+# PostgreSQL: the one thing here that must survive being restarted.
+#
+# A StatefulSet rather than a Deployment, for the reason StatefulSets exist: a Deployment
+# rolling this pod would start the new one before stopping the old, and two processes
+# opening the same data directory is how a database is destroyed. A StatefulSet stops
+# first. The volume it claims outlives the pod, so ratings survive a restart exactly as
+# they did under compose.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: kfchess
+spec:
+  # Headless: there is one of these and it is addressed by name, so a cluster IP in front
+  # of it would be a hop that resolves nothing.
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      name: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: kfchess
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          envFrom:
+            - secretRef:
+                name: kfchess-db
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              # The official image refuses a data directory that is not empty, and a
+              # freshly provisioned volume has a lost+found in it. A subdirectory is the
+              # standard answer.
+              subPath: pgdata
+            - name: migrations
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            # The same question compose's healthcheck asked, and it matters for the same
+            # reason: a shard's first statement is a CREATE TABLE, and a database that is
+            # still starting up would fail it.
+            exec:
+              command: ["pg_isready", "-U", "kfchess", "-d", "kfchess"]
+            initialDelaySeconds: 3
+            periodSeconds: 2
+            failureThreshold: 15
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "kfchess", "-d", "kfchess"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: migrations
+          configMap:
+            name: kfchess-migrations
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

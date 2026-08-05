@@ -1,0 +1,141 @@
+# Prometheus, and the permission it needs to find anything.
+#
+# Under compose the scrape list was written by hand, because the services were named in
+# the same file. Here pods come and go on their own -- that is the point of an autoscaler
+# -- so the list has to be discovered. Every pod that answers /metrics says so in an
+# annotation, and this finds them by asking the API server. Which is why there is an RBAC
+# block: reading pods is a permission, and "it worked without one" would mean the cluster
+# was letting anything read anything.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: kfchess
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kfchess-prometheus
+rules:
+  # List and watch, never get: it needs to know which pods exist and where, not to read
+  # anything out of any one of them.
+  - apiGroups: [""]
+    resources: [pods, endpoints, services]
+    verbs: [list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kfchess-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kfchess-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: kfchess
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: kfchess
+data:
+  prometheus.yml: |
+    global:
+      # Often enough to see a load test happen, rarely enough that the scrape is not
+      # itself a load. The histograms are cumulative, so nothing is lost between scrapes.
+      scrape_interval: 5s
+
+    scrape_configs:
+      - job_name: kfchess
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [kfchess]
+        relabel_configs:
+          # Only pods that say they have something to say.
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          # Scrape the observability port, whatever port the pod's first container
+          # happens to expose.
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          # Which service answered, and which pod of it. The metrics themselves carry no
+          # labels -- the scraper knows where it got them, which is the whole reason.
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: job
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          # The autoscaler needs these two to exist. It asks "what is kfc_active_games
+          # for the pods of this Deployment, in this namespace", and a series with no
+          # namespace and no pod on it cannot answer -- so the association is made here,
+          # once, rather than by the game publishing labels it has no business knowing.
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: kfchess
+spec:
+  type: NodePort
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: web
+      nodePort: 30090
+      name: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: kfchess
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.2
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # Nothing here is worth keeping past the run that produced it.
+            - --storage.tsdb.retention.time=2h
+          ports:
+            - containerPort: 9090
+              name: web
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}

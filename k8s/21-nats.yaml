@@ -1,0 +1,55 @@
+# NATS: the bus between the gateways and the shards.
+#
+# No volume, and that is the same decision compose made. Everything on this bus is in
+# flight; a delta nobody was listening for is not worth keeping, and the ten-second
+# resync is what repairs a client that missed one.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: kfchess
+spec:
+  selector:
+    app: nats
+  ports:
+    - port: 4222
+      name: client
+    - port: 8222
+      name: monitor
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nats
+  namespace: kfchess
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nats
+  template:
+    metadata:
+      labels:
+        app: nats
+    spec:
+      containers:
+        - name: nats
+          image: nats:2-alpine
+          args: ["--http_port", "8222"]  # the monitoring port the probes ask
+          ports:
+            - containerPort: 4222
+              name: client
+            - containerPort: 8222
+              name: monitor
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            periodSeconds: 2
+            failureThreshold: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 10
+            periodSeconds: 10

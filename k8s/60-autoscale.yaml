@@ -1,0 +1,68 @@
+# What makes a shard multiply, and what makes a gateway multiply.
+#
+# Both scale on what actually saturates them, which is not CPU in either case. S5 measured
+# the engine at seven microseconds a tick and found it was never the constraint; a shard
+# fills up with *rooms*, and a gateway fills up with *sockets*. Scaling on CPU would mean
+# waiting for a symptom of the wrong disease.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: shard
+  namespace: kfchess
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shard
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: kfc_active_games
+        target:
+          type: AverageValue
+          # The split deployment held roughly 143 games per shard inside the 100 ms
+          # budget. A hundred is that with room to be wrong in, and it is a measurement
+          # rather than a guess -- which is the only reason S5 comes before S6.
+          averageValue: "100"
+  behavior:
+    scaleUp:
+      # A rush is what this is for; there is no sense being cautious about it.
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      # Slow, and on purpose. A shard is removed by draining it, which takes as long as
+      # its longest game -- so scaling down twice on a dip that lasted a minute costs more
+      # than the pods saved. Five minutes is several games' worth of evidence.
+      stabilizationWindowSeconds: 300
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway
+  namespace: kfchess
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: kfc_connections
+        target:
+          type: AverageValue
+          # The design sized a gateway at 30,000 sockets and nothing has contradicted it;
+          # this is a laptop, and 400 is what makes the autoscaler observable on one.
+          # Raise it, or delete this object, before reading anything into the figure.
+          averageValue: "400"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      # A gateway holds live sockets: removing one is a reconnect for everybody on it.
+      stabilizationWindowSeconds: 300

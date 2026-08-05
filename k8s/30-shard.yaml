@@ -1,0 +1,108 @@
+# The shards: they run the games, and they have never seen a socket.
+#
+# A plain Deployment, not Agones, and the design says why: Agones exists for long-lived
+# match servers that need explicit allocation and a long graceful shutdown. Games here
+# last thirty to ninety seconds, so a Deployment plus a shard that drains on SIGTERM
+# achieves the same thing with nothing new to operate.
+#
+# No Service, and that is not an omission. Nothing connects to a shard: it subscribes to
+# NATS and is addressed by the subject its own name makes. The only thing that wants to
+# reach it is Prometheus, which finds pods rather than Services -- hence the annotations.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shard
+  namespace: kfchess
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shard
+  strategy:
+    rollingUpdate:
+      # Never fewer shards than asked for while a deploy is in progress. The old pod is
+      # still finishing its games and is no longer in the pool, so it cannot be counted
+      # on to take any of the new ones.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: shard
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      # Longer than the longest game, so a rolling deploy never kills one in progress.
+      # This is the ceiling, not the schedule: the shard leaves the pool the moment it is
+      # asked to stop and exits as soon as its last game ends, which is usually far sooner.
+      terminationGracePeriodSeconds: 120
+      initContainers:
+        # What compose said with `depends_on: condition: service_healthy`. Kubernetes has
+        # no such field: a pod is started whenever it is scheduled, and a shard whose
+        # first statement is a CREATE TABLE against a database that is not there yet dies
+        # and is restarted until it is. That does converge -- it did, in three restarts --
+        # but "it crashes a few times and then works" is not a deployment, and a reader of
+        # the logs cannot tell it apart from a real failure.
+        #
+        # Waiting for the port to open is exactly the right question, because a Service
+        # only publishes endpoints for pods that pass their readiness probe. So this
+        # cannot connect until PostgreSQL has answered `pg_isready`.
+        - name: wait-for-services
+          image: kfchess:local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import socket, time
+              for host, port in (("postgres", 5432), ("nats", 4222), ("redis", 6379)):
+                  while True:
+                      try:
+                          socket.create_connection((host, port), 2).close()
+                          print(f"{host}:{port} is up", flush=True)
+                          break
+                      except OSError:
+                          time.sleep(1)
+      containers:
+        - name: shard
+          image: kfchess:local
+          # Built locally and imported into the cluster; never fetched. See k8s/README.md.
+          imagePullPolicy: IfNotPresent
+          command: ["python", "server_main.py"]
+          envFrom:
+            - configMapRef:
+                name: kfchess-env
+            - secretRef:
+                name: kfchess-db
+          # No KFC_SHARD_ID. A shard's id is half of the subject only it serves, so two
+          # shards answering to one name would each receive the other's traffic -- and the
+          # default is the hostname, which in a pod is the pod's own name. The orchestrator
+          # has already solved this; setting it here would un-solve it.
+          ports:
+            - containerPort: 9100
+              name: obs
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: obs
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            # /healthz consults nothing on purpose. A liveness check that asks the
+            # database is one that restarts every healthy shard the moment the database
+            # hiccups.
+            httpGet:
+              path: /healthz
+              port: obs
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            # No CPU limit. A limit here would be throttling, and throttling a process
+            # whose whole measured problem is a thread that cannot get scheduled would
+            # make every latency number a measurement of the limit.
+            limits:
+              memory: 512Mi

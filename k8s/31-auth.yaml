@@ -1,0 +1,78 @@
+# Auth: it checks passwords, and that is the whole job.
+#
+# The most scalable thing in the cluster and the one that decides how many people get in
+# per second. It holds no sockets, runs no games, and remembers nothing between one
+# password and the next -- so more of them is the entire answer, and it needs no drain,
+# no grace period and no ordering. The eight-run measurement in the design document is
+# what this service exists to prevent.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: kfchess
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth
+  template:
+    metadata:
+      labels:
+        app: auth
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      initContainers:
+        # The same wait the shard does, and for the same reason -- Auth opens the accounts
+        # database on the way up. Two services, not three: it holds no rooms and no queue,
+        # so it never speaks to Redis.
+        - name: wait-for-services
+          image: kfchess:local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import socket, time
+              for host, port in (("postgres", 5432), ("nats", 4222)):
+                  while True:
+                      try:
+                          socket.create_connection((host, port), 2).close()
+                          print(f"{host}:{port} is up", flush=True)
+                          break
+                      except OSError:
+                          time.sleep(1)
+      containers:
+        - name: auth
+          image: kfchess:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "auth_main.py"]
+          envFrom:
+            - configMapRef:
+                name: kfchess-env
+            - secretRef:
+                name: kfchess-db
+          ports:
+            - containerPort: 9100
+              name: obs
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: obs
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: obs
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              # PBKDF2 is the work, and it is pure CPU. This is the one service whose
+              # request is a real statement about what it needs rather than a placeholder.
+              cpu: 500m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
