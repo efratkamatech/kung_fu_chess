@@ -84,7 +84,7 @@ to be revisited is written down rather than re-derived from memory.
 | One game costs ~50 µs a tick | Estimated from the engine's work per tick | Games per shard, and therefore the shard count | **Found out (S5): ~7 µs.** Seven times cheaper; the estimate was pessimistic |
 | ~500 games fit on a shard | Arithmetic on the 50 µs above | The ~10,000-shard figure | **Found out (S5): ~30–40** — and not for CPU reasons. See §2 |
 | Logging in is cheap enough to ignore | Never stated, which is the point — it was assumed by omission | Admission rate under a rush | **Found out (S5): 36.5 ms of PBKDF2 each, ~12/s per shard.** The costliest wrong assumption in this document — **fixed in S6**, which moved it to its own service |
-| Two workloads on one thread degrade gracefully | Assumed by never asking | Whether a single-process deployment can be reasoned about at all | **Found out (S6): they oscillate.** Two identical runs admitted 410 and 998 players, the games moving in exact opposition |
+| Two workloads on one thread degrade gracefully | Assumed by never asking | Whether a single-process deployment can be reasoned about at all | **Found out (S6): the blocking one is a gate, not a competitor.** Eight identical runs seated 0 to 960 players — four of them nobody at all — while the login rate stayed the same in every one |
 | A player notices delay above ~100 ms | Typical for real-time browser games | If it is really 50 ms, a broker hop on the move path stops being affordable | Playtest, then read `kfc_move_handling_ms` |
 | A full snapshot every 10 s is enough to repair drift | Chosen in S0; a client rebuilding from deltas can only drift so far | Bytes per player — the resync is the *larger* half of the bill | **Confirmed (S5):** raising the interval is the cheapest lever if traffic ever binds |
 | Nothing in Redis is worth surviving a restart | Every key there has a TTL in minutes; accounts and ratings are in PostgreSQL | Redis would need persistence and HA, which is a different cost class | Restart Redis under load and see whether anything unrecoverable is lost |
@@ -436,7 +436,7 @@ Redis, PostgreSQL and Prometheus — with the load bot against the published por
 
 | 1,000 connections, 60 s | `--solo` | The split deployment |
 |---|---|---|
-| Seated within the minute | 706, then 410 / 998 | **994** |
+| Seated within the minute | 0–960, over eight runs; four seated none | **994** |
 | Moves played | ~3,700 (61/s) | **9,700 (156/s)** |
 | Move latency, p50 | 100–500 ms | **50 ms** |
 | Games live at once | 353 | **573** (219 + 351 across two shards) |
@@ -467,16 +467,48 @@ What was run *before* Docker started — a thousand connections against `--solo`
 shares the one thread — could not show any of this, and did not. It showed something else
 worth recording.
 
-Two identical 60-second runs came out at **410 and 998 players seated**, with the games
-moving in exact opposition: the run that admitted 410 ticked 88,000 times and averaged
-91 ms a move; the run that admitted 998 ticked 13,000 times and averaged 614 ms. One
-thread, two workloads, and the split between them decided by scheduling rather than by
-anything anybody chose.
+Two identical 60-second runs came out at **410 and 998 players seated**, which read at the
+time like a see-saw: one thread, two workloads, and the split between them decided by
+scheduling rather than by anything anybody chose. Two runs is an anecdote, so it was run
+**eight** times — same size, same duration, and a fresh accounts database each time so no
+run inherited the previous one's thousand rows.
 
-That is not a result about Auth. It is an argument for the whole shape of this design:
-**work that competes for one thread does not degrade, it oscillates**, and which half
-suffers is not a property you can reason about from the code. Putting the two on separate
-processes is what makes either of them predictable.
+| Run | Sockets opened | Logins | **Seated** | Moves | Game ticks |
+|---|---|---|---|---|---|
+| 1 | 843 | 843 | 376 | 0 | 1,081 |
+| 2 | 1,000 | 961 | **960** | 960 | 188 |
+| 3 | 1,000 | 818 | **0** | 0 | 0 |
+| 4 | 1,000 | 795 | **0** | 0 | 0 |
+| 5 | 446 | 446 | 446 | 1,956 | 52,394 |
+| 6 | 1,000 | 799 | **0** | 0 | 0 |
+| 7 | 1,000 | 719 | **0** | 0 | 0 |
+| 8 | 499 | 499 | 498 | 1,456 | 31,059 |
+
+**Four runs in eight seated nobody at all.** Not 410 against 998 — zero against 960. And
+scraping the server's own metrics every five seconds says the see-saw reading was wrong:
+
+- **The login rate is the same in all eight runs — 11 to 18 a second.** It is the only
+  number in the set that does not move. There is no alternation to find: the password
+  hashing wins every time, at the same rate, whatever else is waiting.
+- **`kfc_matches_total` stays at zero for the whole run and then jumps in one step**, at
+  the moment the last login lands. Nobody is matched *while* the queue is draining.
+- **In the four failed runs the tick loop did not run at all.** `kfc_clients` — which is
+  written once per tick — froze at 377 for seventy seconds, and not one game tick was
+  recorded. Not a slower half; a stopped one.
+
+The arithmetic then explains every row. A thousand logins at eleven a second is
+ninety-one seconds, and the window is sixty. The runs that seated everybody are exactly
+the runs where **fewer sockets ever opened** — 446 and 499 — so the queue emptied inside
+the minute and every waiting player was matched at once. Nothing about the games decided
+any of it.
+
+So the correction, and it is a stronger argument for the split rather than a weaker one:
+**a blocking workload on a shared thread is not a competitor, it is a gate.** Everything
+behind it — the tick loop, the outbound queue, the matchmaker — waits, in the same order,
+every time. Which side loses is perfectly predictable; the only thing left to chance is
+whether the backlog happens to clear before anyone is measuring. That is why the split
+deployment seated 994 of 1,000 while this one has a coin-flip's chance of seating none:
+not because Auth was given more capacity, but because it was taken off the path.
 
 #### The games that outlived their players — found, and fixed
 
