@@ -847,13 +847,25 @@ shard is the first component that knows the text was a login at all. And login b
 asynchronous, so a socket can close during the check — both ends drop the late answer, and
 both have a test.
 
-The end-to-end gain is **unmeasured**, for the same reason as S5: the split deployment
-needs Docker, and `--solo` shares one thread so it cannot show it. What solo did show is
-recorded in the design document and is a finding in its own right: two identical runs
-admitted 410 and 998 players, with the games moving in exact opposition. Two workloads on
-one thread do not degrade — they oscillate.
+**And then Docker started, so the split deployment was measured for the first time.** Nine
+containers, a thousand connections: **994 seated within the minute** against solo's 706,
+**9,700 moves at 156/s** against ~3,700 at 61/s, p50 latency 50 ms against 100–500, and
+573 games live across the two shards. The engine cost did not move — 6.8 µs a tick against
+7.0 — which is the closest thing to a constant this project has measured. Full table in
+`Server_Design_EN.md`.
+
+It also found two things nothing else could have. The image was missing `auth_main.py`, so
+the service added to compose could never have started — caught by the first `docker compose
+up` anybody ran. And **games outlive their players in a multi-shard deployment**: a first
+run left 209 games running with zero connections. One real race was found and fixed on the
+way (the gateway recorded an owner for an already-closed socket, so the shard seating that
+player never learned she had gone), but it was not the main cause. **The defect is open and
+documented**, with what has been ruled out — it needs more than one shard, it is not lost
+disconnects, and it does not reproduce through the in-process bus, which is precisely why
+the next step is a deliberately reordering bus in the tests.
 
 820 tests, 100% coverage, ruff clean.
 
-**Next:** S6 as originally written — K3s. Its exit criteria are unchanged, and the cluster
-it deploys now has one more service in it.
+**Next:** the open defect above, then S6 as originally written — K3s. Its exit criteria are
+unchanged, and the cluster it deploys now has one more service in it. Deploying a leak onto
+Kubernetes is not an improvement on running it under compose.

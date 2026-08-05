@@ -430,10 +430,42 @@ costs what it always did; it simply no longer happens where the games are.
 | Where the 36.5 ms happens | on the games' thread | on an Auth replica that owns no games |
 | Admissions per second | ~12, per shard, unimprovable | ~27 per Auth replica, and you can start more |
 
-**Unmeasured, and it must be said as plainly as the rest:** the end-to-end gain belongs to
-the split deployment, and the split deployment still cannot be run on this machine. What
-*was* run — a thousand connections against `--solo`, where Auth shares the one thread —
-cannot show it, and did not. It showed something else worth recording instead.
+**Measured at last, on the real thing.** Docker came up, and these are from
+`docker compose up` — nine containers: two shards, two Auth replicas, a gateway, NATS,
+Redis, PostgreSQL and Prometheus — with the load bot against the published port.
+
+| 1,000 connections, 60 s | `--solo` | The split deployment |
+|---|---|---|
+| Seated within the minute | 706, then 410 / 998 | **994** |
+| Moves played | ~3,700 (61/s) | **9,700 (156/s)** |
+| Move latency, p50 | 100–500 ms | **50 ms** |
+| Games live at once | 353 | **573** (219 + 351 across two shards) |
+| Bytes per connection | 142–490 B/s | **364 B/s** |
+| One game, one tick | 7.0 µs | **6.8 µs** |
+| The server's share of a move | 1 ms | **0.25 ms** |
+| One login | 36.5 ms, on the games' thread | **28 ms, on an Auth container** |
+
+Two of those deserve a sentence each. **The engine cost did not move** — 6.8 µs against
+7.0, on a completely different deployment, which is as close to a constant as this project
+has found. And **the budget held for the median player at 286 live games**: p99 ≤ 100 ms at
+both 100 and 200 connections, where solo broke at 30–40. That is roughly 143 games per
+shard within budget, an order of magnitude better than solo and within sight of the
+design's 500.
+
+The tail is another matter. At 573 games p50 was 50 ms and p90 was a second: the median
+player is served and the unlucky one is not, on a laptop running nine containers *and* the
+load generator testing them.
+
+**The allocator distributed unevenly** — 219 games against 351. Not a bug: load is reported
+on a five-second heartbeat, so every game started inside one window gets the same "least
+loaded" answer. Worth knowing before somebody reads a graph and infers a catastrophe.
+
+**And the run found a defect that no amount of single-process testing could have.** See
+"the games that outlive their players", below.
+
+What was run *before* Docker started — a thousand connections against `--solo`, where Auth
+shares the one thread — could not show any of this, and did not. It showed something else
+worth recording.
 
 Two identical 60-second runs came out at **410 and 998 players seated**, with the games
 moving in exact opposition: the run that admitted 410 ticked 88,000 times and averaged
@@ -445,6 +477,34 @@ That is not a result about Auth. It is an argument for the whole shape of this d
 **work that competes for one thread does not degrade, it oscillates**, and which half
 suffers is not a property you can reason about from the code. Putting the two on separate
 processes is what makes either of them predictable.
+
+#### The games that outlive their players — an open defect
+
+The first load test against the real cluster left **209 games running with zero
+connections**, and they never went away. What is known:
+
+- It needs **more than one shard**. With `--scale shard=1`, ten games out of ten were
+  discarded; with two, roughly one in five survives its players.
+- It is **not lost disconnects**. The gateway opened 120 sockets and closed 120; the shards
+  logged 120 registrations and 120 departures. Every disconnect was delivered and acted on.
+- It does **not** reproduce in one process. The same scenario driven through
+  `InProcessMessageBus` cleans up perfectly, every time — which is the point: the
+  in-process bus delivers synchronously, so it cannot produce the interleavings a real
+  network does.
+- One genuine race *was* found and fixed on the way: the gateway recorded a new owner for a
+  connection that had already closed, so the shard claiming it — the one seating that
+  player in a game — was never told she had gone. Fixed, tested, and **not the main cause**:
+  the counter for it never fired in the runs that still leaked.
+
+What it costs: a leaked game holds a `GameSession` and its board for ever. Nothing reaps
+it, because every unattended release path in this system is a TTL on a *key*, and a game is
+an object in a shard's memory. That asymmetry is itself worth noting — it is the one
+resource here without the second release path the rest of the design is careful to give.
+
+Two candidate fixes, in order of honesty: find the interleaving with a deliberately
+**reordering message bus** in the tests, which is the tool this defect is asking for; and
+independently give a game the unattended release path every other resource has, so that
+this class of bug cannot strand memory whatever causes it.
 
 **Why multiple regions?** 10 million players "from all over the world" cannot sit on one
 continent anyway. `MS_PER_CELL = 1000` — a piece crosses a square in one second. A 300 ms

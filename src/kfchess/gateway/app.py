@@ -122,8 +122,18 @@ class Gateway:
             send(reply.text)
 
     def _claim(self, conn_id: str, shard_id: str) -> None:
-        """Note who owns this connection now, and forward whatever was said meanwhile."""
+        """Note who owns this connection now, and forward whatever was said meanwhile.
+
+        A claim can lose the race with a closing socket: the disconnect went to whoever
+        owned her at the time, and the shard claiming her now is seating her in a game
+        without ever having been told she left. So it is told here, immediately, by the
+        one component that knows the socket is gone.
+        """
         held = self._router.claim(conn_id, shard_id)
+        if held is None:
+            _log.info("connection %s was claimed after it closed", conn_id)
+            self._send_to_shard(shard_id, ClientEventKind.DISCONNECTED, conn_id)
+            return
         _log.info("connection %s belongs to %s", conn_id, shard_id)
         for text in held:
             self._send_to_shard(shard_id, ClientEventKind.MESSAGE, conn_id, text)

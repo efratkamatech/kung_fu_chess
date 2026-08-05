@@ -264,7 +264,14 @@ def test_a_seating_shard_takes_the_connection_over_from_the_one_holding_it():
     ]
 
 
-def test_a_connection_that_closed_before_its_claim_forgets_what_it_held():
+def test_a_shard_that_claims_a_closed_connection_is_told_it_is_gone():
+    """The race that leaked games in the real deployment, and could not in one process.
+
+    A handover moves a connection between shards, and the disconnect is addressed to
+    whoever owned her *then*. If she closes in that window, the shard claiming her — the
+    one seating her in a game as it speaks — is never told, and its game keeps a member
+    who will never leave. The gateway is the only thing that knows the socket is gone.
+    """
     gateway, bus = a_gateway()
     conn_id = gateway.connect(a_socket()[0])
     gateway.receive(conn_id, '{"type": "login"}')
@@ -272,4 +279,18 @@ def test_a_connection_that_closed_before_its_claim_forgets_what_it_held():
     gateway.disconnect(conn_id)
     answer(bus, conn_id, "", claim="sh1")  # the claim arrives after she is gone
 
-    assert [event.kind for event in events(bus, "sh1")] == []
+    assert [event.kind for event in events(bus, "sh1")] == [
+        ClientEventKind.DISCONNECTED
+    ]
+
+
+def test_what_a_closed_connection_said_is_not_forwarded_after_the_claim():
+    """She is gone; her queued login is not news anybody can act on."""
+    gateway, bus = a_gateway()
+    conn_id = gateway.connect(a_socket()[0])
+    gateway.receive(conn_id, '{"type": "login"}')
+
+    gateway.disconnect(conn_id)
+    answer(bus, conn_id, "", claim="sh1")
+
+    assert [event.text for event in events(bus, "sh1")] == [""]

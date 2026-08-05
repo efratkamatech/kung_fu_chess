@@ -65,14 +65,22 @@ class ConnectionRouter:
         """Keep what a client said until a shard claims her — see :meth:`claim`."""
         self._held.setdefault(conn_id, []).append(text)
 
-    def claim(self, conn_id: str, shard_id: str) -> List[str]:
+    def claim(self, conn_id: str, shard_id: str) -> Optional[List[str]]:
         """Record this connection's owner, and hand back anything held for it.
 
         Called on a *first* claim and on a handover alike: a shard that seats a player
         into a game it runs takes her connection from whichever shard was holding it, and
         this is the whole of what changes. The held messages come back in the order they
         were said, which is the order they must be sent in.
+
+        ``None`` means the socket closed before the claim arrived, and it is not a
+        detail. The disconnect went to whoever owned her *then*, so the shard claiming
+        her now has never been told she is gone — and it is seating her in a game as it
+        speaks. Recording an owner for a dead socket, which this used to do, left that
+        game with a member who would never leave it. The caller has to say so instead.
         """
+        if conn_id not in self._sends:
+            return None
         self._owner[conn_id] = shard_id
         return self._held.pop(conn_id, [])
 
