@@ -276,6 +276,41 @@ def test_the_default_clock_reads_real_local_time():
     assert ClientGameState().current() is None  # builds its own clock, draws nothing yet
 
 
+def test_the_first_stamp_anchors_the_clock_even_when_it_points_backwards():
+    """Before any stamp there is no estimate to protect, only a placeholder.
+
+    The reading climbs from zero at construction while the server's stamps count the
+    *game's* age, so a client that waited in the lobby is "ahead" of a server it has
+    never heard from. Refusing that first anchor would strand it there for good.
+    """
+    local = [0]
+    clock = ServerClock(lambda: local[0])
+    local[0] = 60_000            # a minute in the lobby before the game was created
+    assert clock.now_ms == 60_000  # the placeholder has climbed with local time
+    clock.sync(500)              # ...and the game it was finally put in is 500 ms old
+    assert clock.now_ms == 500
+
+
+def test_a_client_older_than_its_game_still_sees_a_piece_in_flight():
+    """The regression the windowed by-eye check caught, at the level it is decided.
+
+    With the first anchor refused, this client's clock stayed a minute ahead, every
+    arrival was already in its past, and :meth:`_Flight.position_at` clamped every
+    frame of every move to the destination — pieces teleported and nothing on that
+    screen ever animated again.
+    """
+    local = [0]
+    state = ClientGameState(ServerClock(lambda: local[0]))
+    local[0] = 60_000                   # alive a minute before being seated
+    state.reset(a_snapshot(now_ms=0))   # ...in a game that has only just started
+    state.apply(protocol.MoveStarted(7, "wR", "a1", "a3", 0, 1_000))
+
+    local[0] = 60_500                   # half way through the flight
+    moving = state.current().moving
+    assert len(moving) == 1
+    assert moving[0].row == 1.0         # between a1 (row 2) and a3 (row 0), not landed
+
+
 # --- the acceptance test: the client's picture equals the server's -----------
 
 

@@ -85,19 +85,32 @@ class ServerClock:
     server was at T when this arrived — and the local monotonic clock carries it forward
     between messages.
 
-    The estimate only ever moves forward. Stamps do not arrive in order (a
+    Once anchored the estimate only ever moves forward. Stamps do not arrive in order (a
     :class:`~kfchess.shared.protocol.CooldownDone` carries the moment a cooldown *ended*,
     which is older than the tick that noticed it), and a piece that jumped backwards
-    mid-flight would look far worse than one drawn a few milliseconds late. Drift in the
-    other direction is bounded by the resync anyway.
+    mid-flight would look far worse than one drawn a few milliseconds late.
+
+    **Until the first stamp arrives there is nothing to move forward from.** The reading
+    below starts at zero when this client is built and climbs with the local clock, while
+    the server's stamps count the *game's* age from when its session was created. The two
+    share no origin: a client that sat in the lobby for a minute before its game began is
+    a minute "ahead" of a server it has never heard from. Letting the forward-only rule
+    defend that placeholder rejects the first real anchor, and every one after it — the
+    offset then never washes out, and once it exceeds a move's flight time every piece is
+    drawn already landed and nothing on that screen ever animates again. So the first
+    stamp is obeyed whichever way it points; the rule starts once there is a real anchor
+    to protect.
     """
 
-    __slots__ = ("_monotonic_ms", "_server_ms", "_local_ms")
+    __slots__ = ("_monotonic_ms", "_server_ms", "_local_ms", "_anchored")
 
     def __init__(self, monotonic: Callable[[], int] = monotonic_ms) -> None:
         self._monotonic_ms = monotonic
         self._server_ms = 0
         self._local_ms = monotonic()
+        # False until a server stamp has been seen: what `now_ms` reads before that is a
+        # placeholder on an unrelated origin, not an estimate worth defending.
+        self._anchored = False
 
     @property
     def now_ms(self) -> int:
@@ -105,9 +118,14 @@ class ServerClock:
         return self._server_ms + (self._monotonic_ms() - self._local_ms)
 
     def sync(self, server_ms: int) -> None:
-        """Re-anchor on a time the server just reported, unless it is already behind."""
-        if server_ms < self.now_ms:
+        """Re-anchor on a time the server just reported.
+
+        Always for the first stamp, which establishes the timeline; after that only when
+        it is not already behind.
+        """
+        if self._anchored and server_ms < self.now_ms:
             return
+        self._anchored = True
         self._server_ms = server_ms
         self._local_ms = self._monotonic_ms()
 
