@@ -21,7 +21,7 @@ from kfchess.engine.events import GameObserver
 from kfchess.model.board import Board
 from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
-from kfchess.rules.rule_engine import RuleEngine
+from kfchess.rules.rule_engine import RuleEngine, legal_targets
 
 
 class GameEngine:
@@ -114,14 +114,11 @@ class GameEngine:
         """Every cell the piece at ``source`` may legally move to right now.
 
         A rendering aid for highlighting moves; empty if the cell holds no piece or
-        the piece cannot move (e.g. it is mid-move or on cooldown).
+        the piece cannot move (e.g. it is mid-move or on cooldown). The networked
+        client asks :func:`kfchess.rules.rule_engine.legal_targets` the same question
+        against its rebuilt board, which is why the answer lives there and not here.
         """
-        return [
-            Position(row, col)
-            for row in range(self._board.rows)
-            for col in range(self._board.cols)
-            if self._rule_engine.is_legal_move(self._board, source, Position(row, col))
-        ]
+        return legal_targets(self._rule_engine, self._board, source)
 
     def request_jump(self, cell: Position) -> None:
         """Make the piece on ``cell`` jump in place, if it can.

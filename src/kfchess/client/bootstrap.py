@@ -25,9 +25,12 @@ from kfchess.config import (
 from kfchess.graphics.assets import AnimationBank
 from kfchess.graphics.geometry import board_pixel_size
 from kfchess.graphics.hud import Hud
+from kfchess.graphics.input import ClickFeedback
 from kfchess.graphics.renderer import BoardRenderer
 from kfchess.graphics.sound import SoundPlayer
 from kfchess.model.color import Color
+from kfchess.movement.rules import standard_movement_rules
+from kfchess.rules.rule_engine import RuleEngine
 from kfchess.shared.tokens import load_board_csv
 
 
@@ -73,4 +76,9 @@ def build_thin_client_app(
         board_x_offset=PANEL_PX,
         window_name=window_name,
         sound_player=sound_player,
+        # Read-only, and only ever asked where a selected piece could go: the hints have
+        # to come from somewhere, and the alternative — the server sending a list of
+        # squares on every click — would put a network round trip inside a mouse press.
+        rule_engine=RuleEngine(standard_movement_rules()),
+        feedback=ClickFeedback(),
     )

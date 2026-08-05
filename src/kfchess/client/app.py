@@ -11,12 +11,15 @@ it delegates to — handling a click, the winner text, and when to quit — are 
 from __future__ import annotations
 
 import math
+from typing import Optional
 
 from kfchess.config import HUD_TEXT_COLOR, PANEL_BG
 from kfchess.graphics.img import Img
+from kfchess.graphics.input import ClickFeedback
 from kfchess.graphics.sound import SoundPlayer
 from kfchess.shared.codes import Phase
 from kfchess.model.position import Position
+from kfchess.rules.rule_engine import RuleEngine, legal_targets
 from kfchess.client.controller import ClientController
 from kfchess.client.net_client import NetClient
 from kfchess.client.snapshot_view import SnapshotHudSource, to_render_inputs
@@ -40,6 +43,8 @@ class ThinClientApp:
         window_name: str = "KungFu Chess (client)",
         frame_delay_ms: int = 16,
         sound_player: SoundPlayer = None,
+        rule_engine: RuleEngine = None,
+        feedback: ClickFeedback = None,
     ) -> None:
         self._net = net_client
         self._renderer = renderer
@@ -53,6 +58,14 @@ class ThinClientApp:
         self._frame_delay_ms = frame_delay_ms
         # Immediate-reaction events (sound): silent by default, like build_graphics_app.
         self._sound_player = sound_player if sound_player is not None else SoundPlayer()
+        # Read-only legality, for the green hints alone. It judges nothing: the board it
+        # is given was rebuilt from the server's own snapshot, and the server still
+        # decides every move. None in the unit tests that do not draw.
+        self._rule_engine = rule_engine
+        self._feedback = feedback if feedback is not None else ClickFeedback()
+        # Where the last move this client sent was headed, so a refusal from the server
+        # — which names a reason, not a square — has a cell to flash red.
+        self._last_target: Optional[Position] = None
 
     def _handle_click(self, canvas_x: int, canvas_y: int) -> None:
         """Turn a click (in canvas pixels) into a move command and queue it to send."""
@@ -65,7 +78,32 @@ class ThinClientApp:
         )
         command = self._controller.click(cell, snapshot, self._net.color)
         if command is not None:
+            self._last_target = cell
             self._net.queue_command(command)
+
+    def legal_hints(self, board):
+        """The cells to tint green: where the selected piece may go, or nothing.
+
+        Answered by :func:`kfchess.rules.rule_engine.legal_targets` against the board
+        rebuilt from the latest snapshot, so this client highlights by the same rule the
+        server will judge the move with, without a second copy of the rules living here.
+        """
+        selected = self._controller.selected
+        if selected is None or self._rule_engine is None:
+            return ()
+        return legal_targets(self._rule_engine, board, selected)
+
+    def invalid_cell(self):
+        """The cell to outline red right now, or ``None``.
+
+        The server is what decides a move is illegal, so the flash starts when its
+        refusal arrives rather than on a guess made here — which is also why it is the
+        *target* of the last move sent that lights up, the one square the refusal is
+        about.
+        """
+        if self._net.take_rejection() is not None and self._last_target is not None:
+            self._feedback.flash(self._last_target)
+        return self._feedback.current()
 
     def _winner_text(self, snapshot) -> str:
         winner = snapshot.winner
@@ -121,7 +159,13 @@ class ThinClientApp:
         self._hud_source.update(snapshot)
         board, moving, cooldowns = to_render_inputs(snapshot)
         frame = self._renderer.render(
-            board, moving, snapshot.now_ms, self._controller.selected, cooldowns
+            board,
+            moving,
+            snapshot.now_ms,
+            self._controller.selected,
+            cooldowns,
+            self.legal_hints(board),
+            self.invalid_cell(),
         )
         if snapshot.phase is Phase.OVER:
             self._renderer.draw_game_over(

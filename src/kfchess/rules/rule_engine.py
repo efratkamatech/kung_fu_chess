@@ -13,6 +13,8 @@ on cooldown from a recent landing.
 
 from __future__ import annotations
 
+from typing import List
+
 from kfchess.model.board import Board
 from kfchess.model.piece import PieceState
 from kfchess.model.position import Position
@@ -50,3 +52,25 @@ class RuleEngine:
         if occupant is not None and occupant.color == piece.color:
             return False
         return True
+
+
+def legal_targets(
+    rule_engine: RuleEngine, board: Board, source: Position
+) -> List[Position]:
+    """Every cell the piece at ``source`` may legally move to on ``board`` right now.
+
+    A rendering aid — the green hints drawn under a selected piece — and deliberately
+    the *only* place that answers it. The windowed game holds a live engine and the
+    networked client holds a board rebuilt from snapshots, but both highlight through
+    here, so what a player is shown as reachable is decided by the same rule that will
+    judge the move when she makes it.
+
+    Empty if the cell holds no piece or the piece cannot move (mid-flight, or cooling
+    down after a landing).
+    """
+    return [
+        Position(row, col)
+        for row in range(board.rows)
+        for col in range(board.cols)
+        if rule_engine.is_legal_move(board, source, Position(row, col))
+    ]
