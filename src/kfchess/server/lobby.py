@@ -29,7 +29,12 @@ from kfchess.bus import envelope, subjects
 from kfchess.config import SNAPSHOT_RESYNC_MS
 from kfchess.model.board import Board
 from kfchess.model.color import Color
-from kfchess.obs.measures import GAME_TICK_US, MATCHES, MOVE_HANDLING_MS
+from kfchess.obs.measures import (
+    GAME_TICK_US,
+    GAMES_REAPED,
+    MATCHES,
+    MOVE_HANDLING_MS,
+)
 from kfchess.shared.codes import NoticeReason, RejectReason
 from kfchess.shared.protocol import (
     CreateRoom,
@@ -182,18 +187,35 @@ class Lobby:
         (its opponent is still watching) is not empty, so it survives until they leave too.
         """
         if not self._members_by_game[game_id]:
-            session = self._games[game_id].session
-            for color in Color:
-                name = session.name_of(color)
-                if name is not None:
-                    # Nobody is coming back to this: the last person in it has left. The
-                    # entry would expire on its own -- that is what covers a shard that
-                    # crashes -- but a player whose game just ended should not be sent
-                    # back into it on her next login.
-                    self._directory.leave(name)
-            del self._games[game_id]
-            del self._members_by_game[game_id]
-            self._rooms.remove_game(game_id)
+            self._drop(game_id)
+
+    def _drop(self, game_id: int) -> None:
+        """Forget a game and everything that points at it. The only place one is removed."""
+        session = self._games[game_id].session
+        for color in Color:
+            name = session.name_of(color)
+            if name is not None:
+                # Nobody is coming back to this: the last person in it has left. The
+                # entry would expire on its own -- that is what covers a shard that
+                # crashes -- but a player whose game just ended should not be sent
+                # back into it on her next login.
+                self._directory.leave(name)
+        del self._games[game_id]
+        del self._members_by_game[game_id]
+        self._rooms.remove_game(game_id)
+
+    def _abandoned(self, game_id: int) -> bool:
+        """Whether a game has nobody left in it that this lobby still knows about.
+
+        Not a clock. A game whose every member is a client the lobby no longer holds is
+        abandoned *by definition* — nobody is in it and nothing will ever arrive to say
+        so, because the messages that would have said it have already been and gone. A
+        quiet game between two connected players is not idle, it is quiet, and any
+        timeout long enough to spare it would be too long to be worth having.
+        """
+        return not any(
+            member in self._clients for member in self._members_by_game[game_id]
+        )
 
     # --- inbound messages ----------------------------------------------------
 
@@ -691,7 +713,11 @@ class Lobby:
         Their patience is now measured on their own clients' clocks, which are exactly as
         numerous as the players themselves.
         """
+        abandoned = []
         for game_id, game in self._games.items():
+            if self._abandoned(game_id):
+                abandoned.append(game_id)
+                continue
             # Timed around the session alone -- the engine advancing, the arbiter
             # resolving -- because that is the cost the "500 games to a shard" estimate
             # was built from. The broadcasting below it is charged to the network, not
@@ -702,6 +728,30 @@ class Lobby:
             self._maybe_record_result(game_id)
             self._broadcast(game_id)
             self._resync_if_due(game_id, dt_ms)
+        for game_id in abandoned:
+            self._reap(game_id)
+
+    def _reap(self, game_id: int) -> None:
+        """Drop an abandoned game, and say so, because nobody should have had to.
+
+        The unattended release path a game did not have. Every other resource here has
+        one — a room id, a directory entry, a place in the queue and a shard's place in
+        the pool all expire by themselves — and a game, alone, depended entirely on
+        somebody arriving to announce that they had left.
+
+        It counts what it takes, and that is the point as much as the reclaiming is. This
+        number should be zero. A rising one is a leak nobody has found yet, made visible
+        instead of quietly swept up.
+        """
+        GAMES_REAPED.inc()
+        _log.warning(
+            "reaped an abandoned game",
+            extra={
+                "game": game_id,
+                "members": sorted(self._members_by_game[game_id]),
+            },
+        )
+        self._drop(game_id)
 
     def next_event_delay_ms(self) -> Optional[int]:
         """The shortest wait before any game needs a tick, or ``None`` if all are idle.

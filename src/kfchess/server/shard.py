@@ -40,7 +40,7 @@ from kfchess.bus.envelope import (
     decode_start_game,
     encode,
 )
-from kfchess.obs.measures import ACTIVE_GAMES
+from kfchess.obs.measures import ACTIVE_GAMES, CLIENTS
 from kfchess.server.lobby import Lobby, NewBoard
 from kfchess.services.shared import SharedState
 from kfchess.server.user_store import UserStore
@@ -254,6 +254,10 @@ class Shard:
         """Advance every game this shard is running, and say that it is still running."""
         self._hub.tick(dt_ms)
         ACTIVE_GAMES.set(self._hub.game_count)
+        # Published so that "every socket is held by exactly one shard" stops being an
+        # assumption and becomes a query: summed across the shards this equals the
+        # gateways' connection count, and when it does not, a disconnect went astray.
+        CLIENTS.set(len(self._client_of))
         self._heartbeat(dt_ms)
 
     def _heartbeat(self, dt_ms: int) -> None:

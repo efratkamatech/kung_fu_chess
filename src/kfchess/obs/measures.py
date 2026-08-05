@@ -13,6 +13,8 @@ in the design it is checking does not live only in somebody's memory.
 | ``kfc_bytes_out_total`` | ~325 B/s to a player (~2.6 kbps) |
 | ``kfc_matches_total`` | the matchmaker, not the engine, is the hot path |
 | ``kfc_logins_total`` / ``kfc_login_ms`` | that moving the password check off the game thread raised admissions |
+| ``kfc_games_reaped_total`` | **that the safety net is not carrying anything.** It should stay at zero; a rising line is a leak nobody has found yet |
+| ``kfc_clients`` vs ``kfc_connections`` | **an invariant, not a measurement.** Every socket a gateway holds is held by exactly one shard, so the two sums are equal. They drifted apart in a real run, and that drift is a lost disconnect |
 
 Two of these are named differently from the implementation plan, and deliberately.
 
@@ -58,6 +60,16 @@ MOVE_HANDLING_MS = REGISTRY.histogram(
 MATCHES = REGISTRY.counter(
     "kfc_matches_total",
     "Pairs of players matched into a game since this shard started.",
+)
+
+CLIENTS = REGISTRY.gauge(
+    "kfc_clients",
+    "Connections this shard believes it is holding.",
+)
+
+GAMES_REAPED = REGISTRY.counter(
+    "kfc_games_reaped_total",
+    "Games dropped because nobody was left in them and nothing said so.",
 )
 
 # --- what the auth service is doing --------------------------------------------

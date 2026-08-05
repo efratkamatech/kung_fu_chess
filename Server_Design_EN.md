@@ -531,10 +531,33 @@ and 3 before; **1 in total afterwards, and not growing.** A guard was added alon
 seating a player who is already seated is refused and logged — so that this *class* of bug
 cannot strand memory again even from a cause nobody has found yet. It has not fired once.
 
-**Still open, and much smaller:** roughly one game in sixty survives its players. It is not
-the double-seat path, because that guard never fires. A game remains the one resource in
-this system with no unattended release path — every other one is a key with a TTL — and
-giving it one is the obvious floor under whatever is left.
+**A game now has the unattended release path it was the only resource to lack.** Every
+other one — a room id, a directory entry, a place in the queue, a shard's place in the pool
+— expires by itself; a game depended entirely on somebody arriving to say that they had
+left. It is reaped when none of its members is a client the lobby still holds, which is not
+a timeout and deliberately so: a quiet game between two connected players is quiet, not
+abandoned, and any timeout long enough to spare it would be too long to be worth having.
+**It counts what it takes**, and that number should be zero — a rising one is a leak nobody
+has found.
+
+**And the residual turned out to be a different animal, which the counter is what proved.**
+The reaper fires *zero* times and a game still survives about one in twenty: so those games
+are not phantom-membership at all. The lobby genuinely believes a member is still
+connected.
+
+A second measurement pinned it. The shards now publish how many connections they think they
+hold, and that turns an assumption into an invariant — *every socket a gateway holds is held
+by exactly one shard*, so the two sums are equal:
+
+```
+shard clients = 2   vs   gateway sockets = 0
+```
+
+One stranded client per stranded game. **The disconnect was published and went to the wrong
+shard**: the gateway addresses it to the owner it has recorded, and ownership moves during a
+handover, so a stale owner drops a departure that the real owner never hears. That is a
+much narrower defect than "games leak", it is now visible in one Prometheus query rather
+than by counting containers, and it is the next thing to fix.
 
 **Why multiple regions?** 10 million players "from all over the world" cannot sit on one
 continent anyway. `MS_PER_CELL = 1000` — a piece crosses a square in one second. A 300 ms

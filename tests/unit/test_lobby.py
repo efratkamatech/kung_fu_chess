@@ -37,7 +37,8 @@ from kfchess.shared.protocol import (
     decode,
     encode,
 )
-from kfchess.server.lobby import Lobby
+from kfchess.server.lobby import Lobby, _LiveGame
+from kfchess.server.session import GameSession
 from kfchess.services.directory import PlayerDirectory
 from kfchess.services.shared import SharedState
 from kfchess.services.store import InMemoryKeyValueStore
@@ -907,3 +908,65 @@ def test_a_player_already_in_a_game_is_not_seated_into_a_second_one():
     # No second seat, and the game she is in is the one she was already in.
     assert len(of_type(white, Seated)) == 1
     assert of_type(white, State)[-1].snapshot.room_id == first_game.room_id
+
+
+# --- the unattended release path a game did not have ---------------------------
+
+def test_a_game_whose_members_are_all_gone_is_reaped():
+    """The floor under any leak, present or future.
+
+    A game is discarded when its last member leaves — but that is event-driven, and the
+    event is exactly what goes missing when things go wrong between processes. This is
+    the other path: a game none of whose members is a client the lobby still holds is
+    abandoned by definition, and nothing will ever arrive to say so.
+    """
+    hub, white, black, wid, bid = seat_two()
+    # Corrupt the membership the way a lost or duplicated message once did: the clients
+    # are gone, but the game still lists them.
+    stranded = set(hub._members_by_game[0])
+    hub.disconnect(wid)
+    hub.disconnect(bid)
+    hub._games[0] = _LiveGame(GameSession(_rook_board()))
+    hub._members_by_game[0] = stranded
+
+    hub.tick(1)
+
+    assert hub.game_count == 0
+
+
+def test_reaping_counts_what_it_takes():
+    """The number is the point as much as the reclaiming: zero means no leak is hiding."""
+    from kfchess.obs.measures import GAMES_REAPED
+
+    hub, _, _, wid, bid = seat_two()
+    stranded = set(hub._members_by_game[0])
+    hub.disconnect(wid)
+    hub.disconnect(bid)
+    hub._games[0] = _LiveGame(GameSession(_rook_board()))
+    hub._members_by_game[0] = stranded
+    before = GAMES_REAPED.value
+
+    hub.tick(1)
+
+    assert GAMES_REAPED.value - before == 1
+
+
+def test_a_quiet_game_between_two_connected_players_is_not_reaped():
+    """Quiet is not abandoned, which is why this is not a timeout."""
+    from kfchess.config import MATCH_TIMEOUT_MS
+
+    hub, _, _, _, _ = seat_two()
+
+    hub.tick(MATCH_TIMEOUT_MS * 10)  # nobody moves for a very long time
+
+    assert hub.game_count == 1
+
+
+def test_a_game_one_of_whose_players_is_still_there_is_not_reaped():
+    """Half a game is still a game: the countdown is what decides it, not the reaper."""
+    hub, _, _, wid, _ = seat_two()
+
+    hub.disconnect(wid)
+    hub.tick(1)
+
+    assert hub.game_count == 1

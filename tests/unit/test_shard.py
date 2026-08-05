@@ -180,3 +180,16 @@ def test_an_auth_answer_for_a_connection_that_has_gone_is_dropped():
     )
 
     assert shard.clients == 0
+
+
+def test_a_shard_publishes_how_many_connections_it_believes_it_holds():
+    """Summed across shards this equals the gateways' count; drift is a lost disconnect."""
+    from kfchess.obs.measures import CLIENTS
+
+    bus, shard, _, _ = a_pooled_shard()
+    report(bus, ClientEventKind.CONNECTED, "gw1.0")
+    report(bus, ClientEventKind.CONNECTED, "gw1.1")
+
+    shard.tick(1)
+
+    assert CLIENTS.value == 2
