@@ -23,6 +23,8 @@ This is the executable companion to the design document. The design says *what* 
 - [S6 — K3s](#s6--k3s)
 - [Cross-cutting rules](#cross-cutting-rules)
 - [Risk register](#risk-register)
+- [Where it stands today](#where-it-stands-today)
+- [What the by-eye check found](#what-the-by-eye-check-found)
 
 ---
 
@@ -248,8 +250,11 @@ passes without modification, the protocol change is transparent to the game.
 ### Exit criteria
 
 - [x] `ruff check src tests` clean; `pytest` green; coverage still 100% — 549 tests
-- [ ] A local two-client game plays identically to before, **by eye** — still open; two
-      headless clients play a full move over real sockets, but nobody has watched it
+- [x] A local two-client game plays identically to before, **by eye** — **met, and it
+      failed first.** Watched against the k3d cluster on 6 Aug 2026, and it did *not* play
+      identically: only one of the two screens animated, and the green move hints were
+      gone. Two defects, neither visible to any test; both fixed (`1fe3b41`, `116c10a`)
+      and the check re-run. See "What the by-eye check found" below
 - [x] Measured bytes/second per client dropped by ≥50× — **×98.8** (537 B/s per client,
       against 53,000 B/s for the old 2,650-byte snapshot at 20 Hz)
 - [x] `test_e2e_client_server.py` passes with no changes
@@ -878,6 +883,10 @@ either build — S0 changed what is drawn between messages, and S1 changed where
 live, and both were verified with headless clients over real sockets instead. Plus
 `tests/integration` against PostgreSQL, which needs `psycopg` on the host.
 
+> Both are now closed. The PostgreSQL tests pass against the cluster's database (S6), and
+> the windowed check was finally run on 6 Aug 2026 — see the last section of this file.
+> It found two defects, which is the answer to why it stayed on the list so long.
+
 **Known gap, S5's to close:** in a container the server writes its log to a *file*
 (`config.SERVER_LOG`), so `docker compose logs server` shows nothing. S5 already owns the
 logging change; a stream handler alongside the file one is the fix.
@@ -950,6 +959,69 @@ runs, four of which seated nobody at all. The design document has the table.
 842 tests, 100% coverage, ruff clean — and the four PostgreSQL integration tests are no
 longer skipped by anybody who has run them: they pass against the cluster's own database.
 
-**Next:** nothing on this plan. What is left open is the one thing no test can close —
-nobody has watched the **windowed** client against a split build, which S0 left open and
-every stage since has verified with headless clients over real sockets instead.
+---
+
+## What the by-eye check found
+
+**6 Aug 2026.** The last open criterion on this plan — S0's "plays identically to before,
+by eye" — was finally run: two windowed clients against the k3d cluster. **It failed, and
+found two defects that had been in the code since S0 and S2 respectively.** Neither was
+reachable by any test that existed, and neither was subtle once seen. Written up here
+because the criterion's value is the argument, not the tick.
+
+### 1. Only one of the two screens animated
+
+The other teleported every piece to its destination — and it was the same screen every
+time, which is what made it look like a rule rather than a glitch.
+
+Not the delta protocol: both clients held the identical flight, endpoints and timings
+equal to the server's. It was `ServerClock`. It starts at zero when the client process
+does and climbs with local time, while the server's stamps count the *game's* age from
+when its session was created. The two share no origin, so a client that waited in the
+lobby before its game began is that much "ahead" of a server it has never heard from —
+and the forward-only rule defended that placeholder and refused the first real anchor,
+and every one after it. Once the offset exceeded a move's flight time, every frame of
+every move clamped to the destination.
+
+Measured on the cluster with one client started six seconds before the other: the older
+drew **1** distinct position per flight against the younger's **56**, with their clocks
+**7047 ms** apart. It was never about who moved — the stale client failed to animate the
+move it did not make either. Fixed by obeying the first stamp whichever way it points;
+both now draw 112 and the clocks agree exactly.
+
+**Why 100 % coverage did not have a chance.** Every clock in the tests is frozen, so
+`now_ms` reads 0 at construction and the first sync always succeeds. The bug needs local
+time to actually pass before the first stamp. *Coverage records which lines ran, not
+which timelines were possible* — and this plan's own risk #1 ("client/server drift in
+interpolation") was mitigated by "assert snapshot equality in tests", which is exactly
+the kind of test that cannot see it.
+
+### 2. No green move hints, and no red outline on a refusal
+
+`BoardRenderer.render` has taken `legal_targets` and `invalid_cell` since the windowed
+game got them; the thin client called it with five arguments and let both default to
+empty. So the networked client had neither, and an illegal move produced only a line in
+the terminal. It runs no engine, so it had nothing to compute hints from.
+
+It did not need one: `to_render_inputs` already rebuilds a real `Board`, and legality is
+read-only given a board. The loop moved out of `GameEngine.legal_targets` into
+`rules/rule_engine.py`, and both callers now go through it — so what a player is shown as
+reachable is decided by the same rule that judges the move when she makes it. The red
+outline is deliberately asymmetric: it is driven by the server's `Rejected`, because the
+server is what decides a move is illegal.
+
+### The argument this settles
+
+Every stage from S0 to S6 verified with headless clients over real sockets, and that was
+right — it is what made the delta protocol, the shard split, and the drain provable. But
+**every one of those harnesses reads the snapshot, and neither of these defects is in the
+snapshot.** One is in the clock the snapshot is read *at*; the other is in an argument
+never passed to the renderer. A criterion that can only be met by a person is not a
+weaker criterion, and this is the second time on this project that the instrument, not
+the system, was the thing standing between a defect and being seen.
+
+**Next:** nothing on this plan, and nothing left open on it. The honest candidates are a
+decision rather than a step: JetStream for `game.finished` (risk #5, still the one
+message that may be lost), and the deliberately-unbuilt list in the design document.
+
+849 tests, 100% coverage, ruff clean.
